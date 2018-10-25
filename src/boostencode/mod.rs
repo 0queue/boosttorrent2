@@ -16,12 +16,12 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn decode(bytes: &[u8]) -> Value {
+    pub fn decode(bytes: &[u8]) -> Result<Value, String> {
         let mut bytes: Vec<u8> = Vec::from(bytes);
         let val = parse_val(&mut bytes);
 
         if bytes.len() > 0 {
-            panic!("extra bytes");
+            return Err("extra bytes".to_string());
         }
 
         val
@@ -60,12 +60,6 @@ impl Value {
                 res
             }
         }
-    }
-}
-
-impl From<String> for Value {
-    fn from(string: String) -> Self {
-        Value::decode(string.into_bytes().as_mut())
     }
 }
 
