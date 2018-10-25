@@ -1,0 +1,6 @@
+[package]
+name = "boosttorrent2"
+version = "0.1.0"
+authors = ["Thomas Harris <teh019283@gmail.com>"]
+
+[dependencies]
