@@ -32,17 +32,16 @@ fn test_parse_integer() {
 }
 
 #[test]
-#[should_panic]
 fn test_parse_integer_negative_zero() {
     let mut s1 = "i-0e".to_string().into_bytes();
-    parse_integer(s1.as_mut()).unwrap();
+    assert_eq!(parse_integer(s1.as_mut()), Err(BDecodeError::InvalidInteger));
+
 }
 
 #[test]
-#[should_panic]
 fn test_parse_integer_leading_zero() {
     let mut s1 = "i023e".to_string().into_bytes();
-    parse_integer(s1.as_mut()).unwrap();
+    assert_eq!(parse_integer(s1.as_mut()), Err(BDecodeError::InvalidInteger));
 }
 
 #[test]
@@ -66,8 +65,7 @@ fn test_parses_dict() {
 }
 
 #[test]
-#[should_panic]
 fn test_parse_dict_not_ascending() {
     let mut s1 = "d5:worldi1e5:helloi2ee".to_string().into_bytes();
-    parse_dict(s1.as_mut()).unwrap();
+    assert_eq!(parse_dict(s1.as_mut()), Err(BDecodeError::InvalidDict));
 }

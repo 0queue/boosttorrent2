@@ -15,16 +15,31 @@ pub enum Value {
     Dict(HashMap<Vec<u8>, Value>),
 }
 
+#[derive(Debug, Error, PartialEq)]
+pub enum BDecodeError {
+    /// The encoded string was not formatted correctly
+    InvalidValue,
+    /// Error parsing string value
+    InvalidString,
+    /// Error parsing integer value
+    InvalidInteger,
+    /// Error parsing list value
+    InvalidList,
+    /// Error parsing dict value
+    InvalidDict,
+}
+
+
 impl Value {
-    pub fn decode(bytes: &[u8]) -> Result<Value, String> {
+    pub fn decode(bytes: &[u8]) -> Result<Value, BDecodeError> {
         let mut bytes: Vec<u8> = Vec::from(bytes);
-        let val = parse_val(&mut bytes);
+        let val = parse_val(&mut bytes)?;
 
         if bytes.len() > 0 {
-            return Err("extra bytes".to_string());
+            return Err(BDecodeError::InvalidValue);
         }
 
-        val
+        Ok(val)
     }
 
     pub fn encode(&self) -> Vec<u8> {
