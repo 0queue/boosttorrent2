@@ -9,5 +9,5 @@ fn main() {
     println!("{:?}", val);
     println!("{:?}", into);
 
-    println!("{}", boostencode::bstring_to_string(&*val.encode()));
+    println!("{}", std::str::from_utf8(val.encode().as_ref()).unwrap());
 }

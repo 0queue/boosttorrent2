@@ -2,7 +2,6 @@ use boostencode::parse::parse_val;
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::str;
 
 #[cfg(test)]
 mod test;
@@ -85,8 +84,4 @@ fn compare_bytes_slice(a: &[u8], b: &[u8]) -> Ordering {
     }
 
     a.len().cmp(&b.len())
-}
-
-pub fn bstring_to_string(bytes: &[u8]) -> String {
-    str::from_utf8(bytes).unwrap().to_string()
 }

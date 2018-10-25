@@ -1,3 +1,4 @@
+use std::str;
 use super::*;
 
 // clone everything because it's a test
@@ -15,10 +16,10 @@ fn test_encode() {
 
     let v4 = Value::Dict(map);
 
-    assert_eq!("4:spam", bstring_to_string(&*v1.encode()));
-    assert_eq!("i100e", bstring_to_string(&*v2.encode()));
-    assert_eq!("l4:spami100ee", bstring_to_string(&*v3.encode()));
-    assert_eq!("d5:hellol4:spami100ee4:spami100ee", bstring_to_string(&*v4.encode()));
+    assert_eq!("4:spam", str::from_utf8(v1.encode().as_ref()).unwrap());
+    assert_eq!("i100e", str::from_utf8(v2.encode().as_ref()).unwrap());
+    assert_eq!("l4:spami100ee", str::from_utf8(v3.encode().as_ref()).unwrap());
+    assert_eq!("d5:hellol4:spami100ee4:spami100ee", str::from_utf8(v4.encode().as_ref()).unwrap());
 }
 
 #[test]
