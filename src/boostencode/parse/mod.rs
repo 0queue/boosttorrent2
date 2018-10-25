@@ -1,4 +1,4 @@
-use boostencode::compare_bstring;
+use boostencode::compare_bytes_slice;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use super::Value;
@@ -87,7 +87,7 @@ fn parse_dict(bytes: &mut Vec<u8>) -> Value {
 
         if let Value::BString(key) = key {
             if let Some(last) = last_key {
-                if compare_bstring(&last, key.as_ref()) != Ordering::Less {
+                if compare_bytes_slice(&last, key.as_ref()) != Ordering::Less {
                     panic!("dict keys not in ascending order");
                 }
             }
