@@ -2,6 +2,7 @@ use boostencode::parse::parse_val;
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use derive_error::Error;
 
 #[cfg(test)]
 mod test;
