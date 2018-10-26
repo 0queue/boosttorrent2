@@ -17,7 +17,7 @@ pub enum Value {
 }
 
 #[derive(Debug, Error, PartialEq)]
-pub enum BDecodeError {
+pub enum DecodeError {
     /// The encoded string was not formatted correctly
     InvalidValue,
     /// Error parsing string value
@@ -32,12 +32,12 @@ pub enum BDecodeError {
 
 
 impl Value {
-    pub fn decode(bytes: &[u8]) -> Result<Value, BDecodeError> {
+    pub fn decode(bytes: &[u8]) -> Result<Value, DecodeError> {
         let mut bytes: Vec<u8> = Vec::from(bytes);
         let val = parse_val(&mut bytes)?;
 
         if bytes.len() > 0 {
-            return Err(BDecodeError::InvalidValue);
+            return Err(DecodeError::InvalidValue);
         }
 
         Ok(val)
