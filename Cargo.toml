@@ -5,3 +5,7 @@ authors = ["Thomas Harris <teh019283@gmail.com>", "Jake Sandler <jsandler18@gmai
 
 [dependencies]
 derive-error = "0.0.4"
+
+[dependencies.clap]
+version = "~2.32.0"
+features = ["yaml"]

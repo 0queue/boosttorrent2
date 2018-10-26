@@ -1,0 +1,12 @@
+name: boosttorrent2
+version: "0.1.0"
+author: "Thomas Harris <teh019283@gmail.com> Jake Sandler <jsandler18@gmail.com>"
+about: Bittorrent client
+args:
+  - garbage-mode:
+      short: g
+      long: garbage-mode
+      help: Invents garbage
+  - bencoded-string:
+      index: 1
+      required: false
