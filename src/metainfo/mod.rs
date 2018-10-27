@@ -4,54 +4,62 @@ use derive_error::Error;
 use std::collections::HashMap;
 use std::io::{Error, Read};
 
+#[cfg(test)]
+mod test;
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct SingleFile {
     // Full path of the file from the root
-    file_name: String,
+    pub file_name: String,
     // File size
-    length: usize,
+    pub length: usize,
     // MD5 Sum of the entire file
-    md5sum: Option<String>,
+    pub md5sum: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub struct MultiFile {
     // Name of the root directory of the torrent
-    root_dir_name: String,
+    pub root_dir_name: String,
     // A list of all files in this torrent
-    files: Vec<SingleFile>,
+    pub files: Vec<SingleFile>,
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub enum FileInfo {
     Single(SingleFile),
     Multi(MultiFile),
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub struct InfoDict {
     // The number of bytes in each piece
-    piece_length: usize,
+    pub piece_length: usize,
     // The SHA1 hashes of each piece
-    pieces: Vec<String>,
+    pub pieces: Vec<String>,
     // If true, only publish presence via trackers and not directly to peers
-    private: bool,
+    pub private: bool,
     // Information about the file(s) to download
-    file_info: FileInfo,
+    pub file_info: FileInfo,
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub struct MetaInfo {
     // Information about the file to be downloaded
-    info: InfoDict,
+    pub info: InfoDict,
     // The url for the tracker
-    announce: String,
+    pub announce: String,
     // An optional list of more trackers
-    announce_list: Option<Vec<String>>,
+    pub announce_list: Option<Vec<String>>,
     // The UNIX epoch timestamp of when this torrent was created
-    creation_date: Option<u64>,
+    pub creation_date: Option<u64>,
     // Free-form textual comments of the author
-    comment: Option<String>,
+    pub comment: Option<String>,
     // Name and version of the program used to create the .torrent
-    created_by: Option<String>,
+    pub created_by: Option<String>,
     // The string encoding format used to generate the pieces part of the info dictionary in the
     // .torrent metafile
-    encoding: Option<String>,
+    pub encoding: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -141,21 +149,21 @@ impl MetaInfo {
                 }
             })?;
         let info = Self::parse_info_dict(info_dict)?;
-        Ok(MetaInfo{
+        Ok(MetaInfo {
             info,
             announce,
             announce_list,
             creation_date,
             comment,
             created_by,
-            encoding
+            encoding,
         })
     }
 
     /// Transposes an Option of a Result into a Result of an Option.
     /// None will be mapped to Ok(None). Some(Ok(_)) and Some(Err(_)) will be mapped to Ok(Some(_)) and Err(_).
     /// Using this because Option::transpose is not stable for some reason
-    fn transpose<T,E>(opt: Option<Result<T,E>>) -> Result<Option<T>, E> {
+    fn transpose<T, E>(opt: Option<Result<T, E>>) -> Result<Option<T>, E> {
         match opt {
             Some(res) => res.map(|val| Some(val)),
             None => Ok(None)
@@ -183,8 +191,13 @@ impl MetaInfo {
             }).
             map(|bs| {
                 // bs is a concatenation of 20 byte sha1 hashes, so convert it to a list of hex strings
-                bs.windows(20)
-                    .map(|hash_bytes| format!("{:x?}", hash_bytes))
+                bs.chunks(20)
+                    .map(|hash_bytes| {
+                        hash_bytes.into_iter().fold(String::new(), |mut a, h| {
+                            a.push_str(&format!("{:02x?}", h));
+                            a
+                        })
+                    })
                     .collect::<Vec<String>>()
             })?;
         let private = info_dict.remove("private".as_bytes())
@@ -264,7 +277,7 @@ impl MetaInfo {
         let file_info = match files {
             Some(files) => FileInfo::Multi(MultiFile {
                 root_dir_name: file_name,
-                files: files?
+                files: files?,
             }),
             None => {
                 let length = info_dict.remove("length".as_bytes())
@@ -296,5 +309,4 @@ impl MetaInfo {
 
         Ok(file_info)
     }
-
 }
