@@ -3,6 +3,10 @@ use boostencode::{DecodeError, Value};
 use derive_error::Error;
 use std::collections::HashMap;
 use std::io::{Error, Read};
+use crypto::digest::Digest;
+use crypto::sha1::Sha1;
+use std::str::FromStr;
+
 
 #[cfg(test)]
 mod test;
@@ -45,6 +49,8 @@ pub struct InfoDict {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct MetaInfo {
+    // The SHA1 hash of the value of the info key in the torrent file
+    pub info_hash: [u8; 20],
     // Information about the file to be downloaded
     pub info: InfoDict,
     // The url for the tracker
@@ -78,6 +84,7 @@ impl MetaInfo {
     pub fn from_torrent<T: Read>(torrent: &mut T) -> Result<Self, TorrentParseError> {
         // Read the bytes and bdecode them
         let bytes = torrent.bytes().collect::<Result<Vec<u8>, Error>>()?;
+        let info_hash = Self::get_info_hash(&bytes)?;
         let parsed = Value::decode(&bytes)?;
         let mut toplevel_dict = match parsed {
             Value::Dict(d) => Ok(d),
@@ -150,6 +157,7 @@ impl MetaInfo {
             })?;
         let info = Self::parse_info_dict(info_dict)?;
         Ok(MetaInfo {
+            info_hash,
             info,
             announce,
             announce_list,
@@ -158,6 +166,72 @@ impl MetaInfo {
             created_by,
             encoding,
         })
+    }
+
+    fn get_info_hash(bytes: &[u8]) -> Result<[u8; 20], TorrentParseError> {
+        let res = bytes.windows(6)
+            .enumerate()
+            .find(|(_, chunk)| {
+                let chunk_str = std::str::from_utf8(chunk);
+                match chunk_str {
+                    Ok(str) => str == "4:info",
+                    _ => false
+                }
+            })
+            .map(|(idx, _)| idx + 6)
+            .map(|start_idx| {
+                let mut i = start_idx;
+                let mut depth = 0;
+                while i < bytes.len() {
+                    match bytes[i] as char {
+                        // skip ints
+                        'i' => {
+                            while bytes[i] as char != 'e' {
+                                i += 1;
+                            };
+                            i += 1;
+                        }
+                        'd' | 'l' => {
+                            i += 1;
+                            depth += 1;
+                        }
+                        // skip strings
+                        '0'...'9' => {
+                            let mut num = String::new();
+                            while i < bytes.len() && bytes[i] as char >= '0' && bytes[i] as char <= '9' {
+                                num.push(bytes[i] as char);
+                                i += 1
+                            }
+
+                            i += 1 + usize::from_str(num.as_str()).map_err(|_| TorrentParseError::FormatError)?;
+                        }
+                        'e' => {
+                            depth -= 1;
+                            i += 1;
+                            if depth == 0 {
+                                return Ok((start_idx, i));
+                            }
+                        },
+                        _ => return Err(TorrentParseError::FormatError)
+                    }
+                }
+                Err(TorrentParseError::FormatError)
+            })
+            .map(|indexes| {
+                indexes.map(|(start_idx, end_idx)| {
+                    let mut hasher = Sha1::new();
+                    hasher.input(&bytes[start_idx..end_idx]);
+                    let mut res: [u8; 20] = [0; 20];
+                    hasher.result(&mut res);
+                    res
+                })
+            });
+
+        match res {
+            Some(Ok(hash)) => Ok(hash),
+            Some(err) => err,
+            None => Err(TorrentParseError::FormatError)
+        }
     }
 
     /// Transposes an Option of a Result into a Result of an Option.

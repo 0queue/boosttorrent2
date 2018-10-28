@@ -1,5 +1,7 @@
 extern crate clap;
 extern crate derive_error;
+extern crate hyper;
+extern crate crypto;
 
 use boostencode::Value;
 use clap::App;
