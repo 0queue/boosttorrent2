@@ -30,6 +30,10 @@ fn main() {
         let mut f = File::open(string).expect("file not found");
         let mut contents = Vec::new();
         f.read_to_end(&mut contents).expect("error reading file");
-        println!("{}", Value::decode(contents.as_ref()).unwrap());
+        let val = Value::decode(contents.as_ref()).unwrap();
+        println!("{}", val);
+
+        let metainfo = metainfo::MetaInfo::from_value(val).unwrap();
+        println!("{:?}", metainfo)
     }
 }

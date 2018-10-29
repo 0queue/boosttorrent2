@@ -1,10 +1,10 @@
 //! metainfo contains functions and types to parse the .torrent file
 use boostencode::{DecodeError, Value};
+use crypto::digest::Digest;
+use crypto::sha1::Sha1;
 use derive_error::Error;
 use std::collections::HashMap;
 use std::io::{Error, Read};
-use crypto::digest::Digest;
-use crypto::sha1::Sha1;
 use std::str::FromStr;
 
 
@@ -79,7 +79,111 @@ pub enum TorrentParseError {
 
 }
 
+impl SingleFile {
+    pub fn from_hashmap(map: &HashMap<Vec<u8>, Value>) -> Option<SingleFile> {
+        let file_name = match map.get("name".as_bytes())?.to_owned() {
+            // if it isn't utf8 then wtf
+            Value::BString(bytes) => String::from_utf8(bytes).unwrap(),
+            _ => return None,
+        };
+
+        let length = match map.get("length".as_bytes())? {
+            Value::Integer(i) => *i as usize,
+            _ => return None,
+        };
+
+        let md5sum = match map.get("md5".as_bytes()) {
+            // not sure why we have to clone here
+            Some(Value::BString(bytes)) => String::from_utf8(bytes.clone()).ok(),
+            _ => None
+        };
+
+        Some(SingleFile {
+            file_name,
+            length,
+            md5sum,
+        })
+    }
+}
+
+impl MultiFile {
+    pub fn from_hashmap(_map: &HashMap<Vec<u8>, Value>) -> Option<MultiFile> {
+        // TODO reconsider Multi/Single file structure (multi is collection of single?)
+        unimplemented!()
+    }
+}
+
+impl FileInfo {
+    pub fn from_hashmap(map: &HashMap<Vec<u8>, Value>) -> Option<FileInfo> {
+        match (map.get("length".as_bytes()), map.get("files".as_bytes())) {
+            (Some(_), None) => SingleFile::from_hashmap(map).map(|f| FileInfo::Single(f)),
+            (None, Some(_)) => MultiFile::from_hashmap(map).map(|f| FileInfo::Multi(f)),
+            _ => None
+        }
+    }
+}
+
+impl InfoDict {
+    pub fn from_hashmap(map: &HashMap<Vec<u8>, Value>) -> Option<InfoDict> {
+        let piece_length = match map.get("piece length".as_bytes())? {
+            Value::Integer(i) => *i as usize,
+            _ => return None,
+        };
+
+        let pieces = match map.get("pieces".as_bytes())? {
+            Value::BString(bytes) => bytes.chunks(20).map(|chunk| {
+                chunk.iter()
+                    .map(|byte| format!("{:02x?}", byte))
+                    .collect::<Vec<_>>()
+                    .join("")
+            }).collect::<Vec<_>>(),
+            _ => return None,
+        };
+
+        let private = match map.get("private".as_bytes()) {
+            Some(Value::Integer(1)) => true,
+            _ => false,
+        };
+
+        let file_info = FileInfo::from_hashmap(map)?;
+
+        Some(InfoDict {
+            piece_length,
+            pieces,
+            private,
+            file_info,
+        })
+    }
+}
+
 impl MetaInfo {
+    pub fn from_value(val: Value) -> Option<Self> {
+        let map: HashMap<Vec<u8>, Value> = match val {
+            Value::Dict(m) => m,
+            _ => return None
+        };
+
+        // clone because we need the info dict in two places
+        let info = match map.get("info".as_bytes())?.to_owned() {
+            Value::Dict(info_dict) => info_dict,
+            _ => return None
+        };
+
+        let info_hash = sha1_hash(Value::Dict(info.clone()).encode().as_ref());
+        let info = InfoDict::from_hashmap(&info)?;
+
+        Some(MetaInfo {
+            info_hash,
+            info,
+            announce: String::new(),
+            announce_list: None,
+            creation_date: None,
+            comment: None,
+            created_by: None,
+            encoding: None,
+        })
+    }
+
     /// Attempts to parse the given Reader as a torrent file
     pub fn from_torrent<T: Read>(torrent: &mut T) -> Result<Self, TorrentParseError> {
         // Read the bytes and bdecode them
@@ -211,7 +315,7 @@ impl MetaInfo {
                             if depth == 0 {
                                 return Ok((start_idx, i));
                             }
-                        },
+                        }
                         _ => return Err(TorrentParseError::FormatError)
                     }
                 }
@@ -383,4 +487,12 @@ impl MetaInfo {
 
         Ok(file_info)
     }
+}
+
+fn sha1_hash(bytes: &[u8]) -> [u8; 20] {
+    let mut res = [0u8; 20];
+    let mut hasher = Sha1::new();
+    hasher.input(bytes);
+    hasher.result(&mut res);
+    res
 }

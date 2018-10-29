@@ -50,14 +50,14 @@ impl Value {
     pub fn encode(&self) -> Vec<u8> {
         match self {
             Value::BString(bytes) => {
-                let mut res: Vec<_> = string_to_byte_vec(bytes.len().to_string());
+                let mut res = Vec::from(bytes.len().to_string().as_bytes());
                 res.push(':' as u8);
                 // clone because we are borrowing self, want to give it back after
                 res.append(&mut bytes.clone());
 
                 res
             }
-            Value::Integer(num) => string_to_byte_vec(format!("i{}e", num)),
+            Value::Integer(num) => Vec::from(format!("i{}e", num).as_bytes()),
             Value::List(vals) => {
                 let mut res = vec!['l' as u8];
                 vals.into_iter().for_each(|v| res.append(&mut v.encode()));
@@ -111,10 +111,6 @@ impl Display for Value {
             }
         }
     }
-}
-
-fn string_to_byte_vec(string: String) -> Vec<u8> {
-    string.chars().map(|c| c as u8).collect()
 }
 
 fn compare_bytes_slice(a: &[u8], b: &[u8]) -> Ordering {
