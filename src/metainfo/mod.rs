@@ -172,15 +172,44 @@ impl MetaInfo {
         let info_hash = sha1_hash(Value::Dict(info.clone()).encode().as_ref());
         let info = InfoDict::from_hashmap(&info)?;
 
+        let announce = match map.get("announce".as_bytes())? {
+            Value::BString(bytes) => String::from_utf8(bytes.clone()).ok()?,
+            _ => return None,
+        };
+
+        // TODO update announce list based on http://bittorrent.org/beps/bep_0012.html
+        // currently is a flat list, should be tiered
+        let announce_list: Option<Vec<String>> = None;
+
+        let creation_date = match map.get("creation date".as_bytes()) {
+            Some(Value::Integer(i)) => Some(*i as u64),
+            _ => None,
+        };
+
+        let comment = match map.get("comment".as_bytes()) {
+            Some(Value::BString(bytes)) => String::from_utf8(bytes.clone()).ok(),
+            _ => None,
+        };
+
+        let created_by = match map.get("created by".as_bytes()) {
+            Some(Value::BString(bytes)) => String::from_utf8(bytes.clone()).ok(),
+            _ => None,
+        };
+
+        let encoding = match map.get("encoding".as_bytes()) {
+            Some(Value::BString(bytes)) => String::from_utf8(bytes.clone()).ok(),
+            _ => None,
+        };
+
         Some(MetaInfo {
             info_hash,
             info,
-            announce: String::new(),
+            announce,
             announce_list: None,
-            creation_date: None,
-            comment: None,
-            created_by: None,
-            encoding: None,
+            creation_date,
+            comment,
+            created_by,
+            encoding,
         })
     }
 
