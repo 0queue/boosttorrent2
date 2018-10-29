@@ -1,8 +1,12 @@
 use boostencode::parse::parse_val;
+use derive_error::Error;
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use derive_error::Error;
+use std::fmt::Display;
+use std::fmt::Error;
+use std::fmt::Formatter;
+use std::str;
 
 #[cfg(test)]
 mod test;
@@ -74,6 +78,36 @@ impl Value {
                 res.push('e' as u8);
 
                 res
+            }
+        }
+    }
+}
+
+impl Display for Value {
+    // TODO proper indentation
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        match self {
+            Value::BString(bytes) => write!(f, "{}", str::from_utf8(bytes).unwrap_or(format!("<{} bytes>", bytes.len()).as_ref())),
+            Value::Integer(num) => write!(f, "{}", num),
+            Value::List(vals) => {
+                write!(f, "[")?;
+                vals.iter().enumerate().for_each(|(i, val)| {
+                    if i > 0 {
+                        write!(f, ", ");
+                    }
+
+                    write!(f, "{}", val);
+                });
+                write!(f, "]")
+            }
+            Value::Dict(map) => {
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.sort_by(|(k1, _), (k2, _)| compare_bytes_slice(*k1, *k2));
+                writeln!(f, "{{");
+                entries.iter().for_each(|(k, v)| {
+                    writeln!(f, "  {} => {}", str::from_utf8(k).unwrap_or("[...bytes...]"), v);
+                });
+                write!(f, "}}")
             }
         }
     }

@@ -7,6 +7,6 @@ args:
       short: g
       long: garbage-mode
       help: Invents garbage
-  - bencoded-string:
+  - torrent-file:
       index: 1
       required: false

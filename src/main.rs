@@ -1,11 +1,13 @@
 extern crate clap;
+extern crate crypto;
 extern crate derive_error;
 extern crate hyper;
-extern crate crypto;
 
 use boostencode::Value;
 use clap::App;
 use clap::load_yaml;
+use std::fs::File;
+use std::io::Read;
 
 mod boostencode;
 mod metainfo;
@@ -23,8 +25,11 @@ fn main() {
         println!("Garbage mode activated");
     }
 
-    if matches.is_present("bencoded-string") {
-        let string = matches.value_of("bencoded-string").unwrap();
-        println!("{:?}", Value::decode(string.as_ref()));
+    if matches.is_present("torrent-file") {
+        let string = matches.value_of("torrent-file").unwrap();
+        let mut f = File::open(string).expect("file not found");
+        let mut contents = Vec::new();
+        f.read_to_end(&mut contents).expect("error reading file");
+        println!("{}", Value::decode(contents.as_ref()).unwrap());
     }
 }
