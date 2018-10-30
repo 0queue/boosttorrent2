@@ -23,7 +23,11 @@ fn test_metainfo_from_value_valid() {
 
     let val = Value::Dict(hashmap! {
         bytes("announce") => Value::BString(bytes("http://example.com")),
-        bytes("info") => info.clone()
+        bytes("info") => info.clone(),
+        bytes("announce-list") => Value::List(vec![
+            Value::List(vec![Value::BString(bytes("site1a")), Value::BString(bytes("site2a"))]),
+            Value::List(vec![Value::BString(bytes("site1b")), Value::BString(bytes("site2b"))]),
+        ])
     });
 
     assert_eq!(MetaInfo::from_value(val), Some(MetaInfo {
@@ -39,7 +43,7 @@ fn test_metainfo_from_value_valid() {
             }),
         },
         announce: "http://example.com".to_string(),
-        announce_list: None,
+        announce_list: Some(vec![(0, "site1a".to_string()), (0, "site2a".to_string()), (1, "site1b".to_string()), (1, "site2b".to_string())]),
         creation_date: None,
         comment: None,
         created_by: None,

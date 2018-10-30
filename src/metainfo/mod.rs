@@ -4,7 +4,6 @@ use crypto::digest::Digest;
 use crypto::sha1::Sha1;
 use std::collections::HashMap;
 
-
 #[cfg(test)]
 mod test;
 
@@ -52,8 +51,8 @@ pub struct MetaInfo {
     pub info: InfoDict,
     // The url for the tracker
     pub announce: String,
-    // An optional list of more trackers
-    pub announce_list: Option<Vec<String>>,
+    // An optional list of more trackers, the lower the usize the higher priority
+    pub announce_list: Option<Vec<(usize, String)>>,
     // The UNIX epoch timestamp of when this torrent was created
     pub creation_date: Option<u64>,
     // Free-form textual comments of the author
@@ -164,9 +163,10 @@ impl MetaInfo {
             _ => return None,
         };
 
-        // TODO update announce list based on http://bittorrent.org/beps/bep_0012.html
-        // currently is a flat list, should be tiered
-        let _announce_list: Option<Vec<String>> = None;
+        let announce_list = match map.get("announce-list".as_bytes()) {
+            Some(Value::List(vals)) => MetaInfo::interpret_announce_list(vals),
+            _ => None,
+        };
 
         let creation_date = match map.get("creation date".as_bytes()) {
             Some(Value::Integer(i)) => Some(*i as u64),
@@ -192,12 +192,32 @@ impl MetaInfo {
             info_hash,
             info,
             announce,
-            announce_list: None,
+            announce_list,
             creation_date,
             comment,
             created_by,
             encoding,
         })
+    }
+
+    fn interpret_announce_list(tiers: &Vec<Value>) -> Option<Vec<(usize, String)>> {
+        let mut res = Vec::new();
+
+        for (i, tier) in tiers.iter().enumerate() {
+            if let Value::List(announces) = tier {
+                for announce in announces {
+                    if let Value::BString(bytes) = announce {
+                        res.push((i, String::from_utf8(bytes.clone()).ok()?));
+                    } else {
+                        return None;
+                    }
+                }
+            } else {
+                return None;
+            }
+        }
+
+        Some(res)
     }
 }
 
