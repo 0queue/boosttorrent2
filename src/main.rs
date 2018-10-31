@@ -3,6 +3,8 @@ extern crate crypto;
 extern crate derive_error;
 extern crate hyper;
 extern crate maplit;
+extern crate percent_encoding;
+extern crate tokio;
 
 use boostencode::Value;
 use clap::App;
@@ -12,6 +14,7 @@ use std::io::Read;
 
 mod boostencode;
 mod metainfo;
+mod tracker;
 
 fn main() {
     // unwrapping is fine we know it's valid
