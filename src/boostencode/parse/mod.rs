@@ -46,6 +46,8 @@ fn parse_integer(bytes: &mut Vec<u8>) -> Result<Value, DecodeError> {
             return Err(DecodeError::InvalidInteger);
         }
 
+        bytes.remove(0);
+        bytes.remove(0);
         return Ok(Value::Integer(0));
     }
 

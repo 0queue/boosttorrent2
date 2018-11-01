@@ -21,14 +21,18 @@ fn test_parse_bstring() {
 fn test_parse_integer() {
     let mut s1 = "i123e".to_string().into_bytes();
     let mut s2 = "i-4e".to_string().into_bytes();
+    let mut s3 = "i0e".to_string().into_bytes();
 
     let val1 = parse_integer(s1.as_mut()).unwrap();
     let val2 = parse_integer(s2.as_mut()).unwrap();
+    let val3 = parse_integer(s3.as_mut()).unwrap();
 
     assert_eq!(val1, Value::Integer(123));
     assert_eq!(val2, Value::Integer(-4));
+    assert_eq!(val3, Value::Integer(0));
     assert_eq!(0, s1.len());
     assert_eq!(0, s2.len());
+    assert_eq!(0, s3.len());
 }
 
 #[test]
