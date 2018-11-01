@@ -12,6 +12,11 @@ use std::str;
 mod test;
 mod parse;
 
+pub trait FromValue {
+    type Error;
+    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized;
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     BString(Vec<u8>),
@@ -80,6 +85,42 @@ impl Value {
                 res
             }
         }
+    }
+
+    pub fn integer(&self) -> Option<&i32> {
+        if let Value::Integer(i) = self {
+            return Some(i);
+        }
+
+        None
+    }
+
+    pub fn bstring(&self) -> Option<&Vec<u8>> {
+        if let Value::BString(bytes) = self {
+            return Some(bytes);
+        }
+
+        None
+    }
+
+    pub fn bstring_utf8(&self) -> Option<String> {
+        self.bstring().and_then(|bytes| String::from_utf8(bytes.clone()).ok())
+    }
+
+    pub fn list(&self) -> Option<&Vec<Value>> {
+        if let Value::List(list) = self {
+            return Some(list);
+        }
+
+        None
+    }
+
+    pub fn dict(&self) -> Option<&HashMap<Vec<u8>, Value>> {
+        if let Value::Dict(dict) = self {
+            return Some(dict);
+        }
+
+        None
     }
 }
 

@@ -8,8 +8,8 @@ fn bytes(s: &str) -> Vec<u8> {
 #[test]
 fn test_metainfo_from_value_trivial_invalid() {
     let val = Value::Integer(0);
-    let meta = MetaInfo::from_value(val);
-    assert_eq!(None, meta);
+    let meta = MetaInfo::from_value(&val);
+    assert_eq!(None, meta.ok());
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn test_metainfo_from_value_valid() {
         ])
     });
 
-    assert_eq!(MetaInfo::from_value(val), Some(MetaInfo {
+    assert_eq!(MetaInfo::from_value(&val), Ok(MetaInfo {
         info_hash: sha1_hash(info.encode().as_ref()),
         info: InfoDict {
             piece_length: 20,

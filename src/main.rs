@@ -6,7 +6,7 @@ extern crate maplit;
 extern crate percent_encoding;
 extern crate tokio;
 
-use boostencode::Value;
+use boostencode::{FromValue, Value};
 use clap::App;
 use clap::load_yaml;
 use std::fs::File;
@@ -37,7 +37,7 @@ fn main() {
         let val = Value::decode(contents.as_ref()).unwrap();
         println!("{}", val);
 
-        let metainfo = metainfo::MetaInfo::from_value(val).unwrap();
+        let metainfo = metainfo::MetaInfo::from_value(&val).unwrap();
         println!("{:?}", metainfo)
     }
 }

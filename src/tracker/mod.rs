@@ -1,4 +1,4 @@
-use boostencode::{DecodeError, Value};
+use boostencode::{DecodeError, FromValue, Value};
 use hyper;
 use hyper::{
     Client,
@@ -11,8 +11,7 @@ use percent_encoding::{
     QUERY_ENCODE_SET,
 };
 use std::fmt;
-use std::net::{IpAddr, SocketAddr};
-use std::str::FromStr;
+use std::net::SocketAddr;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -105,95 +104,68 @@ impl fmt::Display for Event {
     }
 }
 
-impl PeerInfo {
-    fn from_value(val: Value) -> Option<Self> {
-        let mut map = match val {
-            Value::Dict(m) => m,
-            _ => return None
-        };
+impl FromValue for PeerInfo {
+    type Error = String;
+
+    fn from_value(val: &Value) -> Result<Self, Self::Error> {
+        let map = val.dict().ok_or("Not a dictionary".to_string())?;
+
         let mut peer_id: [u8; 20] = [0; 20];
-        let peer_id_val = map.remove("peer id".as_bytes())?;
-        match peer_id_val {
-            Value::BString(s) => peer_id.copy_from_slice(&s[..20]),
-            _ => return None
-        };
-        let ip_val = map.remove("ip".as_bytes())?;
-        let port_val = map.remove("port".as_bytes())?;
-        let address: SocketAddr = match (ip_val, port_val) {
-            (Value::BString(ip), Value::Integer(port)) => {
-                let ip_string = String::from_utf8(ip).ok()?;
-                let ip_addr = IpAddr::from_str(&ip_string).ok()?;
-                (ip_addr, port as u16).into()
-            }
-            _ => return None,
-        };
-        Some(PeerInfo {
+        map.get("peer id".as_bytes()).and_then(Value::bstring)
+            .map(|bytes| peer_id.copy_from_slice(bytes))
+            .ok_or("Missing key: peer id".to_string())?;
+        let peer_id = peer_id;
+
+        let ip = map.get("ip".as_bytes()).and_then(Value::bstring_utf8)
+            .map(|s| s.parse())
+            .ok_or("Missing key: ip".to_string())?
+            .map_err(|_| "Invalid ip addr".to_string())?;
+
+        let port = map.get("port".as_bytes()).and_then(Value::integer)
+            .map(|i| *i as u16)
+            .ok_or("Missing key: port".to_string())?;
+
+        Ok(PeerInfo {
             peer_id,
-            address,
+            address: SocketAddr::new(ip, port),
         })
     }
 }
 
-impl TrackerResponse {
-    fn from_value(val: Value) -> Option<Self> {
+impl FromValue for TrackerResponse {
+    type Error = String;
 
-        let mut map = match val {
-            Value::Dict(m) => m,
-            _ => return None
+    fn from_value(val: &Value) -> Result<Self, Self::Error> {
+        let map = val.dict().ok_or("Not a dictionary".to_string())?;
+
+        if let Some(msg) = map.get("failure reason".as_bytes()) {
+            return Err(msg.bstring_utf8().unwrap_or("unknown failure reason".to_string()));
         };
 
-        if let Some(msg) = map.remove("failure reason".as_bytes()) {
-            return match msg {
-                Value::BString(m) => String::from_utf8(m).ok().map(|s| TrackerResponse::Failure(s)),
-                _ => None
-            };
-        };
+        let warning_msg = map.get("warning message".as_bytes()).and_then(Value::bstring_utf8);
 
-        let warning_msg = map.remove("warning message".as_bytes())
-            .and_then(|msg| {
-                match msg {
-                    Value::BString(m) => String::from_utf8(m).ok(),
-                    _ => None
-                }
-            });
 
-        let interval = match map.remove("interval".as_bytes())? {
-            Value::Integer(i) => i as u32,
-            _ => return None
-        };
+        let interval = map.get("interval".as_bytes()).and_then(Value::integer)
+            .map(|i| *i as u32)
+            .ok_or("Missing key: interval".to_string())?;
 
-        let min_interval = map.remove("min interval".as_bytes())
-            .and_then(|msg| {
-                match msg {
-                    Value::Integer(i) => Some(i as u32),
-                    _ => None
-                }
-            });
+        let min_interval = map.get("min interval".as_bytes()).and_then(Value::integer)
+            .map(|i| *i as u32);
 
-        let tracker_id = map.remove("tracker id".as_bytes())
-            .and_then(|msg| {
-                match msg {
-                    Value::BString(m) => String::from_utf8(m).ok(),
-                    _ => None
-                }
-            });
+        let tracker_id = map.get("tracker id".as_bytes()).and_then(Value::bstring_utf8);
 
-        let complete = match map.remove("complete".as_bytes())? {
-            Value::Integer(i) => i as u32,
-            _ => return None
-        };
+        let complete = map.get("complete".as_bytes()).and_then(Value::integer)
+            .map(|i| *i as u32)
+            .ok_or("Missing key: complete".to_string())?;
 
-        let incomplete = match map.remove("incomplete".as_bytes())? {
-            Value::Integer(i) => i as u32,
-            _ => return None
-        };
+        let incomplete = map.get("incomplete".as_bytes()).and_then(Value::integer)
+            .map(|i| *i as u32)
+            .ok_or("Missing key: incomplete".to_string())?;
 
-        let peers = match map.remove("peers".as_bytes())? {
-            Value::List(mut list) => list.drain(..)
-                .map(PeerInfo::from_value)
-                .collect::<Option<Vec<PeerInfo>>>(),
-            _ => return None
-        }?;
+        let peers = map.get("peers".as_bytes()).and_then(Value::list)
+            .map(|peers| peers.iter().map(PeerInfo::from_value).collect::<Result<Vec<_>, _>>())
+            .ok_or("Missing key: peers".to_string())?
+            .map_err(|_| "Invalid peers".to_string())?;
 
         let res = TrackerSuccessResponse {
             interval,
@@ -205,8 +177,8 @@ impl TrackerResponse {
         };
 
         match warning_msg {
-            Some(msg) => Some(TrackerResponse::Warning(msg, res)),
-            None => Some(TrackerResponse::Success(res))
+            Some(msg) => Ok(TrackerResponse::Warning(msg, res)),
+            None => Ok(TrackerResponse::Success(res))
         }
     }
 }
@@ -273,7 +245,7 @@ impl Tracker {
             "compact" => 0.to_string(),
         };
         req_uri.push('?');
-        query.iter().fold(&mut req_uri, | s, (k, v)| {
+        query.iter().fold(&mut req_uri, |s, (k, v)| {
             s.push_str(k);
             s.push('=');
             s.push_str(&v);
@@ -321,8 +293,8 @@ impl Tracker {
         }).and_then(|resp_bytes| {
             Value::decode(&resp_bytes).map_err(|e| TrackerError::DecodeError(e))
         }).and_then(|val| {
-            TrackerResponse::from_value(val)
-                .ok_or(TrackerError::InvalidResponse)
+            TrackerResponse::from_value(&val)
+                .map_err(|_| TrackerError::InvalidResponse)
         })
     }
 }

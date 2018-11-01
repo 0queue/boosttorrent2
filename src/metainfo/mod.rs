@@ -1,5 +1,5 @@
 //! metainfo contains functions and types to parse the .torrent file
-use boostencode::Value;
+use boostencode::{FromValue, Value};
 use crypto::digest::Digest;
 use crypto::sha1::Sha1;
 use std::collections::HashMap;
@@ -64,27 +64,21 @@ pub struct MetaInfo {
     pub encoding: Option<String>,
 }
 
+impl FromValue for SingleFile {
+    type Error = String;
 
-impl SingleFile {
-    pub fn from_hashmap(map: &HashMap<Vec<u8>, Value>) -> Option<SingleFile> {
-        let file_name = match map.get("name".as_bytes())?.to_owned() {
-            // if it isn't utf8 then wtf
-            Value::BString(bytes) => String::from_utf8(bytes).unwrap(),
-            _ => return None,
-        };
+    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
+        let map = val.dict().ok_or("Single file not a dictionary".to_string())?;
 
-        let length = match map.get("length".as_bytes())? {
-            Value::Integer(i) => *i as usize,
-            _ => return None,
-        };
+        let file_name = map.get("name".as_bytes()).and_then(Value::bstring_utf8)
+            .ok_or("Missing key: name".to_string())?;
 
-        let md5sum = match map.get("md5".as_bytes()) {
-            // not sure why we have to clone here
-            Some(Value::BString(bytes)) => String::from_utf8(bytes.clone()).ok(),
-            _ => None
-        };
+        let length = map.get("length".as_bytes()).and_then(Value::integer)
+            .map(|i| *i as usize).ok_or("Missing key: length".to_string())?;
 
-        Some(SingleFile {
+        let md5sum = map.get("md5".as_bytes()).and_then(Value::bstring_utf8);
+
+        Ok(SingleFile {
             file_name,
             length,
             md5sum,
@@ -92,48 +86,51 @@ impl SingleFile {
     }
 }
 
-impl MultiFile {
-    pub fn from_hashmap(_map: &HashMap<Vec<u8>, Value>) -> Option<MultiFile> {
-        // TODO reconsider Multi/Single file structure (multi is collection of single?)
+impl FromValue for MultiFile {
+    type Error = String;
+
+    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
         unimplemented!()
     }
 }
 
-impl FileInfo {
-    pub fn from_hashmap(map: &HashMap<Vec<u8>, Value>) -> Option<FileInfo> {
+impl FromValue for FileInfo {
+    type Error = String;
+
+    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
+        let map = val.dict().ok_or("File info not a dictionary".to_string())?;
         match (map.get("length".as_bytes()), map.get("files".as_bytes())) {
-            (Some(_), None) => SingleFile::from_hashmap(map).map(|f| FileInfo::Single(f)),
-            (None, Some(_)) => MultiFile::from_hashmap(map).map(|f| FileInfo::Multi(f)),
-            _ => None
+            (Some(_), None) => SingleFile::from_value(val).map(|f| FileInfo::Single(f)),
+            (None, Some(_)) => MultiFile::from_value(val).map(|f| FileInfo::Multi(f)),
+            _ => Err("Invalid dictionary".to_string())
         }
     }
 }
 
-impl InfoDict {
-    pub fn from_hashmap(map: &HashMap<Vec<u8>, Value>) -> Option<InfoDict> {
-        let piece_length = match map.get("piece length".as_bytes())? {
-            Value::Integer(i) => *i as usize,
-            _ => return None,
-        };
+impl FromValue for InfoDict {
+    type Error = String;
 
-        let pieces = match map.get("pieces".as_bytes())? {
-            Value::BString(bytes) => bytes.chunks(20).map(|chunk| {
+    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
+        let map = val.dict().ok_or("Info not a dictionary".to_string())?;
+
+        let piece_length = map.get("piece length".as_bytes()).and_then(Value::integer)
+            .map(|i| *i as usize)
+            .ok_or("Missing key: piece length".to_string())?;
+
+        let pieces = map.get("pieces".as_bytes()).and_then(Value::bstring)
+            .map(|bytes| bytes.chunks(20).map(|chunk| {
                 chunk.iter()
                     .map(|byte| format!("{:02x?}", byte))
                     .collect::<Vec<_>>()
                     .join("")
-            }).collect::<Vec<_>>(),
-            _ => return None,
-        };
+            }).collect::<Vec<_>>()).ok_or("Missking key: pieces".to_string())?;
 
-        let private = match map.get("private".as_bytes()) {
-            Some(Value::Integer(1)) => true,
-            _ => false,
-        };
+        let private = map.get("private".as_bytes()).and_then(Value::integer)
+            .map_or(false, |i| *i == 1);
 
-        let file_info = FileInfo::from_hashmap(map)?;
+        let file_info = FileInfo::from_value(val)?;
 
-        Some(InfoDict {
+        Ok(InfoDict {
             piece_length,
             pieces,
             private,
@@ -142,53 +139,31 @@ impl InfoDict {
     }
 }
 
-impl MetaInfo {
-    pub fn from_value(val: Value) -> Option<Self> {
-        let map: HashMap<Vec<u8>, Value> = match val {
-            Value::Dict(m) => m,
-            _ => return None
-        };
+impl FromValue for MetaInfo {
+    type Error = String;
 
-        // clone because we need the info dict in two places
-        let info = match map.get("info".as_bytes())?.to_owned() {
-            Value::Dict(info_dict) => info_dict,
-            _ => return None
-        };
+    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
+        let map = val.dict().ok_or("Not a dictionary".to_string())?;
 
-        let info_hash = sha1_hash(Value::Dict(info.clone()).encode().as_ref());
-        let info = InfoDict::from_hashmap(&info)?;
+        let info_val = map.get("info".as_bytes()).ok_or("Missing key: info".to_string())?;
+        let info_hash = sha1_hash(&info_val.clone().encode());
+        let info = InfoDict::from_value(info_val)?;
 
-        let announce = match map.get("announce".as_bytes())? {
-            Value::BString(bytes) => String::from_utf8(bytes.clone()).ok()?,
-            _ => return None,
-        };
+        let announce = map.get("announce".as_bytes()).and_then(Value::bstring_utf8).ok_or("Missing key: announce".to_string())?;
 
-        let announce_list = match map.get("announce-list".as_bytes()) {
-            Some(Value::List(vals)) => MetaInfo::interpret_announce_list(vals),
-            _ => None,
-        };
+        let announce_list = map.get("announce-list".as_bytes()).and_then(Value::list)
+            .and_then(MetaInfo::interpret_announce_list);
 
-        let creation_date = match map.get("creation date".as_bytes()) {
-            Some(Value::Integer(i)) => Some(*i as u64),
-            _ => None,
-        };
+        let creation_date = map.get("creation date".as_bytes()).and_then(Value::integer)
+            .map(|i| *i as u64);
 
-        let comment = match map.get("comment".as_bytes()) {
-            Some(Value::BString(bytes)) => String::from_utf8(bytes.clone()).ok(),
-            _ => None,
-        };
+        let comment = map.get("comment".as_bytes()).and_then(Value::bstring_utf8);
 
-        let created_by = match map.get("created by".as_bytes()) {
-            Some(Value::BString(bytes)) => String::from_utf8(bytes.clone()).ok(),
-            _ => None,
-        };
+        let created_by = map.get("created by".as_bytes()).and_then(Value::bstring_utf8);
 
-        let encoding = match map.get("encoding".as_bytes()) {
-            Some(Value::BString(bytes)) => String::from_utf8(bytes.clone()).ok(),
-            _ => None,
-        };
+        let encoding = map.get("encoding".as_bytes()).and_then(Value::bstring_utf8);
 
-        Some(MetaInfo {
+        Ok(MetaInfo {
             info_hash,
             info,
             announce,
@@ -199,7 +174,9 @@ impl MetaInfo {
             encoding,
         })
     }
+}
 
+impl MetaInfo {
     fn interpret_announce_list(tiers: &Vec<Value>) -> Option<Vec<(usize, String)>> {
         let mut res = Vec::new();
 
