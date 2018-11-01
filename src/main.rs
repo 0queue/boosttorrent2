@@ -4,6 +4,9 @@ extern crate derive_error;
 extern crate hyper;
 extern crate maplit;
 extern crate percent_encoding;
+extern crate serde;
+extern crate serde_bytes;
+extern crate serde_derive;
 extern crate tokio;
 
 use boostencode::Value;

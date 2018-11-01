@@ -1,5 +1,6 @@
 use boostencode::parse::parse_val;
 use derive_error::Error;
+use serde;
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -11,6 +12,8 @@ use std::str;
 #[cfg(test)]
 mod test;
 mod parse;
+mod ser;
+mod de;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
@@ -20,6 +23,9 @@ pub enum Value {
     Dict(HashMap<Vec<u8>, Value>),
 }
 
+pub type Result<T> = std::result::Result<T, DecodeError>;
+
+// obviously this will not do right now but its a start
 #[derive(Debug, Error, PartialEq)]
 pub enum DecodeError {
     /// The encoded string was not formatted correctly
@@ -34,9 +40,21 @@ pub enum DecodeError {
     InvalidDict,
 }
 
+impl serde::ser::Error for DecodeError {
+    fn custom<T: Display>(msg: T) -> Self {
+        DecodeError::InvalidString
+    }
+}
+
+impl serde::de::Error for DecodeError {
+    fn custom<T: Display>(msg: T) -> Self {
+        DecodeError::InvalidString
+    }
+}
+
 
 impl Value {
-    pub fn decode(bytes: &[u8]) -> Result<Value, DecodeError> {
+    pub fn decode(bytes: &[u8]) -> Result<Value> {
         let mut bytes: Vec<u8> = Vec::from(bytes);
         let val = parse_val(&mut bytes)?;
 
@@ -85,7 +103,7 @@ impl Value {
 
 impl Display for Value {
     // TODO proper indentation
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+    fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), Error> {
         match self {
             Value::BString(bytes) => write!(f, "{}", str::from_utf8(bytes).unwrap_or(format!("<{} bytes>", bytes.len()).as_ref())),
             Value::Integer(num) => write!(f, "{}", num),
