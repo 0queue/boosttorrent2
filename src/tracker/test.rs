@@ -6,14 +6,14 @@ use hyper::{
     server::Server,
 };
 use maplit::hashmap;
+use server::SharedState;
 use std::net::IpAddr;
 use std::sync::{
     Arc,
-    atomic::AtomicUsize,
+    RwLock,
 };
 use super::*;
 use tokio;
-
 
 
 fn service_handler(request_: Request<Body>) -> Response<Body> {
@@ -39,10 +39,10 @@ fn service_handler(request_: Request<Body>) -> Response<Body> {
 #[test]
 fn test_announce() {
     let address: (IpAddr, u16) = ([127, 0, 0, 1].into(), 8888);
-
+    let state = SharedState::default();
     let test_server = Server::bind(&address.into())
-        .serve( || {
-            hyper::service::service_fn_ok(  service_handler)
+        .serve(|| {
+            hyper::service::service_fn_ok(service_handler)
         }).map_err(|_| ());
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
     let executor = runtime.executor();
@@ -51,13 +51,10 @@ fn test_announce() {
     let mut tracker = Tracker::new(
         "http://localhost:8888".to_owned(),
         [0; 20],
-        [0; 20],
         8888,
-        Arc::new(AtomicUsize::new(1)),
-        Arc::new(AtomicUsize::new(1)),
-        Arc::new(AtomicUsize::new(1)));
-
-    let start_resp = runtime.block_on(tracker.start()).expect("start should not return error");
+        state);
+    tracker.start();
+    let start_resp = runtime.block_on(tracker).expect("start should not return error");
 
     assert_eq!(start_resp, TrackerResponse::Success(
         TrackerSuccessResponse {
@@ -67,7 +64,7 @@ fn test_announce() {
             complete: 10,
             incomplete: 10,
             peers: vec![PeerInfo {
-                peer_id: [1; 20],
+                peer_id: Some([1; 20]),
                 address: address.into(),
             }],
         }

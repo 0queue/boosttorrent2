@@ -10,6 +10,9 @@ rust-crypto = "0.2.36"
 maplit = "1.0.1"
 tokio = "0.1"
 percent-encoding = "1.0.1"
+log = "0.4.6"
+simple_logger = "1.0.1"
+rand = "0.5.5"
 
 [dependencies.clap]
 version = "~2.32.0"

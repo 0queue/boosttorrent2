@@ -107,6 +107,16 @@ impl FromValue for FileInfo {
     }
 }
 
+impl FileInfo {
+    /// Gets the total size requirements of the torrent in bytes
+    pub fn size(&self) -> usize {
+        match self {
+            FileInfo::Single(s) => s.length,
+            FileInfo::Multi(m) => m.files.iter().fold(0, |a, h| a + h.length)
+        }
+    }
+}
+
 impl FromValue for InfoDict {
     type Error = String;
 
