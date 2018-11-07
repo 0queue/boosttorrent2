@@ -1,17 +1,21 @@
 extern crate clap;
 extern crate crypto;
 extern crate derive_error;
+extern crate futures;
 extern crate hyper;
 extern crate log;
 extern crate maplit;
 extern crate percent_encoding;
 extern crate rand;
+extern crate reqwest;
+extern crate serde;
 extern crate simple_logger;
 extern crate tokio;
 
 use boostencode::{FromValue, Value};
 use clap::App;
 use clap::load_yaml;
+use futures::Future;
 use log::{
     debug,
     error,
@@ -26,6 +30,7 @@ use std::io::Read;
 mod boostencode;
 mod metainfo;
 mod tracker;
+mod tracker2;
 mod server;
 
 fn main() {
@@ -44,24 +49,41 @@ fn main() {
         warn!("Garbage mode activated");
     }
 
-    if matches.is_present("torrent-file") {
-        let string = matches.value_of("torrent-file").unwrap();
-        let mut f = File::open(string).expect("file not found");
-        let mut contents = Vec::new();
-        f.read_to_end(&mut contents).expect("error reading file");
-        let val = Value::decode(contents.as_ref()).unwrap();
-        debug!("{}", val);
-
-        let metainfo = metainfo::MetaInfo::from_value(&val).unwrap();
-        debug!("{:?}", metainfo);
-
-        let peer_id = gen_peer_id();
-
-        let server = server::Server::new(peer_id, metainfo);
-        tokio::run(server);
-    } else {
+    if !matches.is_present("torrent-file") {
         error!("No torrent file provided");
+        return;
     }
+
+    let string = matches.value_of("torrent-file").unwrap();
+    let mut f = File::open(string).expect("file not found");
+    let mut contents = Vec::new();
+    f.read_to_end(&mut contents).expect("error reading file");
+    let val = Value::decode(contents.as_ref()).unwrap();
+    debug!("{}", val);
+
+    let metainfo = metainfo::MetaInfo::from_value(&val).unwrap();
+    debug!("{:?}", metainfo);
+
+    let peer_id = gen_peer_id();
+
+//    let server = server::Server::new(peer_id, metainfo);
+
+    let stats = tracker2::Stats {
+        uploaded: 0,
+        downloaded: 0,
+        left: 0,
+    };
+
+    let addr = reqwest::Url::parse(&metainfo.announce).unwrap();
+    let tracker_info = tracker2::TrackerInfo::new(addr, metainfo.info_hash, peer_id, 6881);
+
+    let interaction = tracker_info.send_event(&stats, tracker2::Event::Started)
+        .and_then(|response| {
+            println!("{}", String::from_utf8_lossy(&response.encode()));
+            Ok(())
+        });
+
+    tokio::run(interaction);
 }
 
 fn gen_peer_id() -> [u8; 20] {
