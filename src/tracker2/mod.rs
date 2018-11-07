@@ -4,7 +4,6 @@ use futures::Future;
 use futures::Stream;
 use futures::sync::mpsc;
 use futures::try_ready;
-use percent_encoding::{percent_encode, QUERY_ENCODE_SET};
 use reqwest::async::Client;
 use reqwest::async::Decoder;
 use reqwest::async::Response;
@@ -13,9 +12,9 @@ use serde::ser::SerializeMap;
 use serde::Serialize;
 use serde::Serializer;
 use std::io::Cursor;
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use tokio::prelude::*;
-use std::net::IpAddr;
 
 pub enum Event {
     Started,
@@ -74,6 +73,7 @@ impl TrackerInfo {
         self.client.get(self.address.clone())
             .query(&self)
             .query(&[("event", event)])
+            .query(&[("compact", "1")])
             .query(stats)
             .send()
             .and_then(|mut res| {
@@ -93,8 +93,12 @@ impl Serialize for TrackerInfo {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
         S: Serializer {
         let mut mapper = serializer.serialize_map(None)?;
-        mapper.serialize_entry("info_hash", &percent_encode(&self.info_hash, QUERY_ENCODE_SET).to_string())?;
-        mapper.serialize_entry("peer_id", &percent_encode(&self.peer_id, QUERY_ENCODE_SET).to_string())?;
+        // explanation: percent_encoding then giving to reqwest re-encodes it, so % turns into %25
+        // it can't seem to serialize a plain old array of bytes, so force it into a string and pass
+        // it on.  Not really an issue
+        let raw_info_hash = unsafe { String::from_utf8_unchecked(self.info_hash.to_vec()) };
+        mapper.serialize_entry("info_hash", &raw_info_hash);
+        mapper.serialize_entry("peer_id", &String::from_utf8(self.peer_id.to_vec()).unwrap())?;
         mapper.serialize_entry("port", &format!("{}", self.port))?;
         mapper.end()
     }

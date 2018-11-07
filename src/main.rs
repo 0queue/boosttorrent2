@@ -62,16 +62,17 @@ fn main() {
     debug!("{}", val);
 
     let metainfo = metainfo::MetaInfo::from_value(&val).unwrap();
-    debug!("{:?}", metainfo);
 
     let peer_id = gen_peer_id();
 
-//    let server = server::Server::new(peer_id, metainfo);
 
     let stats = tracker2::Stats {
         uploaded: 0,
         downloaded: 0,
-        left: 0,
+        left: match metainfo.info.file_info {
+            metainfo::FileInfo::Single(f) => f.length as u64,
+            _ => 0,
+        },
     };
 
     let addr = reqwest::Url::parse(&metainfo.announce).unwrap();
