@@ -1,18 +1,20 @@
+#[warn(unused_extern_crates)]
 extern crate clap;
 extern crate crypto;
 extern crate derive_error;
 extern crate futures;
-extern crate hyper;
 extern crate log;
 extern crate maplit;
-extern crate percent_encoding;
 extern crate rand;
 extern crate reqwest;
 extern crate serde;
 extern crate simple_logger;
 extern crate tokio;
+extern crate byteorder;
 
-use boostencode::{FromValue, Value};
+use std::fs::File;
+use std::io::Read;
+
 use clap::App;
 use clap::load_yaml;
 use futures::Future;
@@ -24,14 +26,13 @@ use log::{
 };
 use rand::prelude::*;
 use simple_logger::init_with_level;
-use std::fs::File;
-use std::io::Read;
+
+use boostencode::{FromValue, Value};
 
 mod boostencode;
 mod metainfo;
-mod tracker;
 mod tracker2;
-mod server;
+mod peer;
 
 fn main() {
     let yaml = load_yaml!("cli.yml");
@@ -69,18 +70,15 @@ fn main() {
     let stats = tracker2::Stats {
         uploaded: 0,
         downloaded: 0,
-        left: match metainfo.info.file_info {
-            metainfo::FileInfo::Single(f) => f.length as u64,
-            _ => 0,
-        },
+        left: metainfo.info.file_info.size() as u64,
     };
 
     let addr = reqwest::Url::parse(&metainfo.announce).unwrap();
-    let tracker_info = tracker2::TrackerInfo::new(addr, metainfo.info_hash, peer_id, 6881);
+    let tracker_info = tracker2::Tracker::new(addr, metainfo.info_hash, peer_id, 6881);
 
     let interaction = tracker_info.send_event(&stats, tracker2::Event::Started)
         .and_then(|response| {
-            println!("{}", String::from_utf8_lossy(&response.encode()));
+            println!("{:?}", response);
             Ok(())
         });
 

@@ -2,7 +2,6 @@
 use boostencode::{FromValue, Value};
 use crypto::digest::Digest;
 use crypto::sha1::Sha1;
-use std::collections::HashMap;
 
 #[cfg(test)]
 mod test;
@@ -89,7 +88,7 @@ impl FromValue for SingleFile {
 impl FromValue for MultiFile {
     type Error = String;
 
-    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
+    fn from_value(_val: &Value) -> Result<Self, Self::Error> where Self: Sized {
         unimplemented!()
     }
 }

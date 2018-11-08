@@ -8,10 +8,6 @@ use hyper::{
 use maplit::hashmap;
 use server::SharedState;
 use std::net::IpAddr;
-use std::sync::{
-    Arc,
-    RwLock,
-};
 use super::*;
 use tokio;
 

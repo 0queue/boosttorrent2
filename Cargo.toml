@@ -5,17 +5,16 @@ authors = ["Thomas Harris <teh019283@gmail.com>", "Jake Sandler <jsandler18@gmai
 
 [dependencies]
 derive-error = "0.0.4"
-hyper = "0.12"
 rust-crypto = "0.2.36"
 maplit = "1.0.1"
 tokio = "0.1"
-percent-encoding = "1.0.1"
 log = "0.4.6"
 simple_logger = "1.0.1"
 rand = "0.5.5"
 futures = "0.1.25"
 serde = "1.0.80"
 reqwest = "0.9.4"
+byteorder = "1.2.7"
 
 [dependencies.clap]
 version = "~2.32.0"

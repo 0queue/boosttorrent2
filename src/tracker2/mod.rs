@@ -1,20 +1,21 @@
-use boostencode::Value;
-use futures::Async;
+use std::io::Cursor;
+use std::time::Duration;
+
 use futures::Future;
 use futures::Stream;
-use futures::sync::mpsc;
-use futures::try_ready;
-use reqwest::async::Client;
-use reqwest::async::Decoder;
-use reqwest::async::Response;
-use reqwest::Url;
+use reqwest::{
+    async::Client,
+    async::Decoder,
+    Url,
+};
 use serde::ser::SerializeMap;
 use serde::Serialize;
 use serde::Serializer;
-use std::io::Cursor;
-use std::net::IpAddr;
-use std::net::SocketAddr;
 use tokio::prelude::*;
+
+use boostencode::FromValue;
+use boostencode::Value;
+use peer::PeerInfo;
 
 pub enum Event {
     Started,
@@ -36,7 +37,7 @@ impl Serialize for Event {
 }
 
 #[derive(Clone)]
-pub struct TrackerInfo {
+pub struct Tracker {
     address: Url,
     info_hash: [u8; 20],
     peer_id: [u8; 20],
@@ -63,13 +64,39 @@ impl Serialize for Stats {
     }
 }
 
+#[derive(Debug)]
+pub enum Response {
+    Failure(String),
+    Success(Duration, Vec<PeerInfo>),
+}
 
-impl TrackerInfo {
-    pub fn new(address: Url, info_hash: [u8; 20], peer_id: [u8; 20], port: u16) -> TrackerInfo {
-        TrackerInfo { address, info_hash, peer_id, port, client: Client::new() }
+impl FromValue for Response {
+    type Error = String;
+
+    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
+        let map = val.dict().ok_or("Not a dictionary".to_string())?;
+
+        let interval = map.get("interval".as_bytes()).and_then(Value::integer)
+            .map(|i| Duration::from_secs(*i as u64))
+            .ok_or("Missing key: interval".to_string())?;
+
+        let peers = match map.get("peers".as_bytes()).ok_or("Missing key: peers".to_string())? {
+            Value::List(dict) => dict.iter().map(PeerInfo::from_value).collect::<Result<Vec<_>, _>>(),
+            Value::BString(bytes) => Ok(PeerInfo::from_compact(bytes)),
+            _ => return Err("Invalid peers format".to_string()),
+        }?;
+
+        Ok(Response::Success(interval, peers))
+    }
+}
+
+
+impl Tracker {
+    pub fn new(address: Url, info_hash: [u8; 20], peer_id: [u8; 20], port: u16) -> Tracker {
+        Tracker { address, info_hash, peer_id, port, client: Client::new() }
     }
 
-    pub fn send_event(&self, stats: &Stats, event: Event) -> impl Future<Item=Value, Error=()> {
+    pub fn send_event(&self, stats: &Stats, event: Event) -> impl Future<Item=Response, Error=()> {
         self.client.get(self.address.clone())
             .query(&self)
             .query(&[("event", event)])
@@ -77,19 +104,23 @@ impl TrackerInfo {
             .query(stats)
             .send()
             .and_then(|mut res| {
-                let body = std::mem::replace(res.body_mut(), Decoder::empty());
-                body.concat2()
+                // copy out the body_mut essentially, to avoid lifetime issues
+                std::mem::replace(res.body_mut(), Decoder::empty()).concat2()
             })
             .map_err(|err| println!("err: {:?}", err))
             .map(|body| {
-                let mut body = Cursor::new(body);
+                let body = Cursor::new(body);
                 let bytes = body.bytes().collect::<Result<Vec<_>, _>>().unwrap();
-                Value::decode(bytes.as_ref()).unwrap()
+
+                match Value::decode(&bytes).map(|v| Response::from_value(&v)) {
+                    Ok(Ok(response)) => response,
+                    _ => Response::Failure("Error decoding response".to_string())
+                }
             })
     }
 }
 
-impl Serialize for TrackerInfo {
+impl Serialize for Tracker {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
         S: Serializer {
         let mut mapper = serializer.serialize_map(None)?;
@@ -97,7 +128,7 @@ impl Serialize for TrackerInfo {
         // it can't seem to serialize a plain old array of bytes, so force it into a string and pass
         // it on.  Not really an issue
         let raw_info_hash = unsafe { String::from_utf8_unchecked(self.info_hash.to_vec()) };
-        mapper.serialize_entry("info_hash", &raw_info_hash);
+        mapper.serialize_entry("info_hash", &raw_info_hash)?;
         mapper.serialize_entry("peer_id", &String::from_utf8(self.peer_id.to_vec()).unwrap())?;
         mapper.serialize_entry("port", &format!("{}", self.port))?;
         mapper.end()
