@@ -65,16 +65,17 @@ impl Serialize for Stats {
 }
 
 #[derive(Debug)]
-pub enum Response {
-    Failure(String),
-    Success(Duration, Vec<PeerInfo>),
-}
+pub struct Success(Duration, Vec<PeerInfo>);
 
-impl FromValue for Response {
+impl FromValue for Success {
     type Error = String;
 
     fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
         let map = val.dict().ok_or("Not a dictionary".to_string())?;
+
+        if let Some(reason) = map.get("failure reason".as_bytes()) {
+            return Err(reason.bstring_utf8().unwrap_or("unknown failure reason".to_string()));
+        }
 
         let interval = map.get("interval".as_bytes()).and_then(Value::integer)
             .map(|i| Duration::from_secs(*i as u64))
@@ -86,7 +87,7 @@ impl FromValue for Response {
             _ => return Err("Invalid peers format".to_string()),
         }?;
 
-        Ok(Response::Success(interval, peers))
+        Ok(Success(interval, peers))
     }
 }
 
@@ -96,7 +97,7 @@ impl Tracker {
         Tracker { address, info_hash, peer_id, port, client: Client::new() }
     }
 
-    pub fn send_event(&self, stats: &Stats, event: Event) -> impl Future<Item=Response, Error=()> {
+    pub fn send_event(&self, stats: &Stats, event: Event) -> impl Future<Item=Success, Error=String> {
         self.client.get(self.address.clone())
             .query(&self)
             .query(&[("event", event)])
@@ -107,15 +108,14 @@ impl Tracker {
                 // copy out the body_mut essentially, to avoid lifetime issues
                 std::mem::replace(res.body_mut(), Decoder::empty()).concat2()
             })
-            .map_err(|err| println!("err: {:?}", err))
-            .map(|body| {
+            .map_err(|err| format!("{}", err))
+            .and_then(|body| {
                 let body = Cursor::new(body);
                 let bytes = body.bytes().collect::<Result<Vec<_>, _>>().unwrap();
 
-                match Value::decode(&bytes).map(|v| Response::from_value(&v)) {
-                    Ok(Ok(response)) => response,
-                    _ => Response::Failure("Error decoding response".to_string())
-                }
+                futures::done(Value::decode(&bytes).map(|val| Success::from_value(&val))
+                    .map_err(|err| err.to_string())
+                    .and_then(|r| r))
             })
     }
 }

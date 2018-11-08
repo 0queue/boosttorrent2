@@ -1,3 +1,4 @@
+extern crate byteorder;
 #[warn(unused_extern_crates)]
 extern crate clap;
 extern crate crypto;
@@ -10,10 +11,13 @@ extern crate reqwest;
 extern crate serde;
 extern crate simple_logger;
 extern crate tokio;
-extern crate byteorder;
 
-use std::fs::File;
-use std::io::Read;
+use std::{
+    fs::File,
+    io::Read,
+    time::Duration,
+    time::Instant,
+};
 
 use clap::App;
 use clap::load_yaml;
@@ -26,6 +30,7 @@ use log::{
 };
 use rand::prelude::*;
 use simple_logger::init_with_level;
+use tokio::timer::Delay;
 
 use boostencode::{FromValue, Value};
 
@@ -76,13 +81,23 @@ fn main() {
     let addr = reqwest::Url::parse(&metainfo.announce).unwrap();
     let tracker_info = tracker2::Tracker::new(addr, metainfo.info_hash, peer_id, 6881);
 
-    let interaction = tracker_info.send_event(&stats, tracker2::Event::Started)
-        .and_then(|response| {
-            println!("{:?}", response);
-            Ok(())
-        });
+    let coordinator = tracker_info.send_event(&stats, tracker2::Event::Started)
+        .map_err(|_| ())
+        .and_then(|res| {
+            println!("Started: {:?}", res);
 
-    tokio::run(interaction);
+            // eventually spawn a bunch of tasks and channels here
+
+            Ok(())
+        })
+        .and_then(|_| Delay::new(Instant::now() + Duration::from_secs(5)).map_err(|_| ()))
+        .and_then(move |_| tracker_info.send_event(&stats, tracker2::Event::Stopped).map_err(|_| ()))
+        .and_then(|res| {
+            println!("\nStopped: {:?}", res);
+            Ok(())
+        }).map_err(|_| ());
+
+    tokio::run(coordinator);
 }
 
 fn gen_peer_id() -> [u8; 20] {
