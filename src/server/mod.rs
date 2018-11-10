@@ -1,102 +1,77 @@
+use bit_vec::BitVec;
+use futures::sync::mpsc::{channel, Receiver, Sender};
 use log::{
     error,
     trace,
     warn,
 };
 use metainfo::MetaInfo;
+use peer::Peer;
+use piece::Piece;
+use replace_with::replace_with;
 use std::default::Default;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::str::FromStr;
-use std::sync::{
-    Arc,
-    RwLock,
-};
 use tokio::{
-    net::TcpListener,
+    io::Error,
+    net::{
+        Incoming,
+        TcpListener,
+    },
     prelude::{
         Async,
         Future,
+        future,
         Stream,
+        stream,
     },
-    io::Error,
+    spawn,
 };
 use tracker::{
     Tracker,
     TrackerResponse,
 };
 
-/// This struct contains all state that is shared between tasks. This struct should not be created
-/// outside of this module.
-#[derive(Debug)]
-pub struct State {
-    pub peer_id: [u8; 20],
-    pub uploaded: u32,
-    pub downloaded: u32,
-    pub left: u32,
-}
+/// Type alias for a heap allocated Stream trait object
+type BoxedStream<T> = Box<dyn Stream<Item=T, Error=()> + Send>;
 
-/// This type is a synchronized wrapper around State.  This is what other modules will use
-#[derive(Debug, Clone)]
-pub struct SharedState(Arc<RwLock<State>>);
-
-impl Default for SharedState {
-    fn default() -> Self {
-        SharedState(Arc::new(RwLock::new(State {
-            peer_id: [0; 20],
-            uploaded: 0,
-            downloaded: 0,
-            left: 0,
-        })))
-    }
-}
-
-impl Deref for SharedState {
-    type Target = Arc<RwLock<State>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 /// This is the server that will listen for and spawn peer connections, manage the tracker, and
 /// write pieces to the file.  This is "main" for a client
 pub struct Server {
-    listener: Box<dyn Future<Item=(), Error=Error> + Send>,
-    state: SharedState,
+    peer_id: [u8; 20],
+    uploaded: u64,
+    uploaded_stream: BoxedStream<u32>,
+    downloaded: u64,
+    downloaded_stream: BoxedStream<u32>,
+    left: u64,
+    listener: Incoming,
     tracker: Tracker,
-
+    piece_stream: BoxedStream<(Piece, Sender<Piece>, BitVec)>,
 }
 
 impl Server {
     pub fn new(peer_id: [u8; 20], meta: MetaInfo) -> Self {
-        let s = State {
-            peer_id,
-            uploaded: 0,
-            downloaded: 0,
-            left: meta.info.file_info.size() as u32,
-        };
-        let state = SharedState(Arc::new(RwLock::new(s)));
         let address = SocketAddr::from_str("0.0.0.0:6888").unwrap();
-        let listener = Box::new(TcpListener::bind(&address)
-            .expect("Failed to open TCP listener")
-            .incoming()
-            .for_each(|peer| {
-                // create a new future to handle this peer.  For now drop
-                trace!("peer connection: {:?}", peer);
-                Ok(())
-            }));
+        let download_size = meta.info.file_info.size() as u64;
         let mut tracker = Tracker::new(
+            peer_id.clone(),
             meta.announce,
             meta.info_hash,
             6888,
-            state.clone(),
         );
-        tracker.start();
+        tracker.start(download_size);
         Server {
-            listener,
-            state,
+            peer_id,
+            uploaded: 0,
+            uploaded_stream: Box::new(stream::empty()),
+            downloaded: 0,
+            downloaded_stream: Box::new(stream::empty()),
+            left: download_size,
+            listener: TcpListener::bind(&address).expect("Failed to open TCP listener").incoming(),
             tracker,
+            piece_stream: Box::new(stream::empty()),
         }
     }
 }
@@ -127,17 +102,61 @@ impl Future for Server {
             }
             _ => () // not ready
         };
-        // poll for new connections
-        match self.listener.poll() {
-            Err(e) => {
-                error!("The TCP listener encountered an error: {:?}", e);
-                return Err(());
+        // poll for new connections, spin up new peer tasks
+        loop {
+            match self.listener.poll() {
+                Ok(Async::Ready(Some(conn))) => {
+                    let (up_sender, up_receiver) = channel(10);
+                    let (down_sender, down_receiver) = channel(10);
+                    let (piece_sender, piece_receiver) = channel(10);
+
+                    replace_with(&mut self.uploaded_stream,
+                                 /* default, in case replacement panics */ || Box::new(stream::empty()),
+                                 |s| Box::new(s.select(up_receiver)));
+                    replace_with(&mut self.downloaded_stream,
+                                 || Box::new(stream::empty()),
+                                 |s| Box::new(s.select(down_receiver)));
+                    replace_with(&mut self.piece_stream,
+                                 || Box::new(stream::empty()),
+                                 |s| Box::new(s.select(piece_receiver)));
+                    let peer = Peer::new(conn, up_sender, down_sender, piece_sender);
+                    spawn(peer);
+                }
+                Err(e) => {
+                    error!("TCP Listener closed unexpectedly with error: {}", e);
+                    return Err(());
+                }
+                _ => break,
             }
-            _ => ()
-        };
+        }
+
+        // get uploaded/downloaded statistic updates
+        loop {
+            match self.uploaded_stream.poll() {
+                Ok(Async::Ready(Some(update))) => self.uploaded += update as u64,
+                _ => break,
+            }
+        }
+        loop {
+            match self.downloaded_stream.poll() {
+                Ok(Async::Ready(Some(update))) => self.downloaded += update as u64,
+                _ => break,
+            }
+        }
+
+        // Get finished pieces and request new pieces
+        loop {
+            match self.piece_stream.poll() {
+                Ok(Async::Ready(Some((finished_piece, new_piece_sender, availible_pieces)))) => {
+                    // TODO verify and write off the finished piece and either kill the peer or give
+                    // them a new piece
+                }
+                _ => break
+            }
+        }
 
         // This future only finishes normally when the download is complete
-        if self.state.read().unwrap().left == 0 {
+        if self.left == 0 {
             trace!("Finished");
             Ok(Async::Ready(()))
         } else {
