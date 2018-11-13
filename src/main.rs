@@ -11,17 +11,18 @@ extern crate reqwest;
 extern crate serde;
 extern crate simple_logger;
 extern crate tokio;
+extern crate bytes;
 
 use std::{
     fs::File,
     io::Read,
-    time::Duration,
-    time::Instant,
 };
 
 use clap::App;
 use clap::load_yaml;
 use futures::Future;
+use futures::stream::Stream;
+use futures::sync::mpsc;
 use log::{
     debug,
     error,
@@ -30,7 +31,6 @@ use log::{
 };
 use rand::prelude::*;
 use simple_logger::init_with_level;
-use tokio::timer::Delay;
 
 use boostencode::{FromValue, Value};
 
@@ -83,19 +83,26 @@ fn main() {
 
     let coordinator = tracker_info.send_event(&stats, tracker2::Event::Started)
         .map_err(|_| ())
-        .and_then(|res| {
+        .map(|res| {
             println!("Started: {:?}", res);
 
             // eventually spawn a bunch of tasks and channels here
 
-            Ok(())
+            ()
         })
-        .and_then(|_| Delay::new(Instant::now() + Duration::from_secs(5)).map_err(|_| ()))
-        .and_then(move |_| tracker_info.send_event(&stats, tracker2::Event::Stopped).map_err(|_| ()))
-        .and_then(|res| {
-            println!("\nStopped: {:?}", res);
-            Ok(())
-        }).map_err(|_| ());
+        .and_then(|a| {
+            let (fp, rx) = file_progress::FileProgress::new();
+
+            tokio::spawn(fp);
+
+            rx.take(1).into_future().map(|_| ()).map_err(|_| ())
+        })
+        .and_then(move |_| {
+            tracker_info.send_event(&stats, tracker2::Event::Stopped).map_err(|_| ())
+        })
+        .map(|res| {
+            println!("Stopped: {:?}", res);
+        });
 
     tokio::run(coordinator);
 }
@@ -109,4 +116,47 @@ fn gen_peer_id() -> [u8; 20] {
     let mut res = [0; 20];
     res.copy_from_slice(id.as_bytes());
     res
+}
+
+mod file_progress {
+    use futures::Async;
+    use futures::Future;
+    use futures::sink::Sink;
+    use futures::sync::mpsc;
+    use futures::sync::oneshot;
+    use rand::Rng;
+
+    pub struct FileProgress {
+        pub progress: f64,
+        tx: mpsc::UnboundedSender<()>,
+    }
+
+    impl FileProgress {
+        pub fn new() -> (FileProgress, mpsc::UnboundedReceiver<()>) {
+            let (tx, rx) = mpsc::unbounded();
+
+            let fp = FileProgress {
+                progress: 0.0,
+                tx,
+            };
+
+            (fp, rx)
+        }
+    }
+
+    impl Future for FileProgress {
+        type Item = ();
+        type Error = ();
+
+        fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
+            if self.progress >= 100.0f64 {
+                self.tx.unbounded_send(()).unwrap();
+                self.tx.close();
+                return Ok(Async::Ready(()));
+            }
+
+            self.progress += if rand::thread_rng().gen_bool(0.1) { 0.1 } else { 0.0 };
+            Ok(Async::NotReady)
+        }
+    }
 }
