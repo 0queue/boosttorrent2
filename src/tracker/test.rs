@@ -6,7 +6,6 @@ use hyper::{
     server::Server,
 };
 use maplit::hashmap;
-use server::SharedState;
 use std::net::IpAddr;
 use std::sync::{
     Arc,
@@ -39,7 +38,6 @@ fn service_handler(request_: Request<Body>) -> Response<Body> {
 #[test]
 fn test_announce() {
     let address: (IpAddr, u16) = ([127, 0, 0, 1].into(), 8888);
-    let state = SharedState::default();
     let test_server = Server::bind(&address.into())
         .serve(|| {
             hyper::service::service_fn_ok(service_handler)
@@ -49,11 +47,11 @@ fn test_announce() {
     executor.spawn(test_server);
 
     let mut tracker = Tracker::new(
+        [0; 20],
         "http://localhost:8888".to_owned(),
         [0; 20],
-        8888,
-        state);
-    tracker.start();
+        8888);
+    tracker.start(1000);
     let start_resp = runtime.block_on(tracker).expect("start should not return error");
 
     assert_eq!(start_resp, TrackerResponse::Success(

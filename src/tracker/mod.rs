@@ -11,7 +11,6 @@ use percent_encoding::{
     percent_encode,
     QUERY_ENCODE_SET,
 };
-use server::SharedState;
 use std::fmt;
 use std::net::{
     IpAddr,
@@ -33,6 +32,8 @@ mod test;
 
 
 pub struct Tracker {
+    // The 20 byte unique identifier for this instance of the client
+    peer_id: [u8; 20],
     // The uri of the tracker
     tracker_uri: String,
     // The SHA1 hash of the value of the info key in the torrent file
@@ -42,7 +43,6 @@ pub struct Tracker {
     // A string the client should send on subsequent announcements
     tracker_id: Option<String>,
     // The shared state of the client
-    state: SharedState,
     // A future of the must recent tracker request
     request: Box<dyn Future<Item=TrackerResponse, Error=TrackerError> + Send>,
 }
@@ -209,66 +209,62 @@ impl FromValue for TrackerResponse {
 impl Tracker {
     /// Create a new Tracker
     pub fn new(
+        peer_id: [u8; 20],
         tracker_uri: String,
         info_hash: [u8; 20],
-        port: u16,
-        state: SharedState) -> Self {
+        port: u16) -> Self {
         Tracker {
+            peer_id,
             tracker_uri,
             info_hash,
             port,
             tracker_id: None,
-            state,
             request: Box::new(err(TrackerError::InvalidResponse)),
         }
     }
 
     /// Tell the tracker that you are starting your download
-    pub fn start(&mut self) {
-        self.request = Box::new(self.announce(Some(Event::Started)))
+    pub fn start(&mut self, download_size: u64) {
+        self.request = Box::new(self.announce(Some(Event::Started), download_size, 0, 0))
     }
 
     /// Tell the tracker that you are stopping your download without finishing.
-    pub fn cancel(&mut self) {
-        self.request = Box::new(self.announce(Some(Event::Stopped)))
+    pub fn cancel(&mut self, left: u64, uploaded: u64, downloaded: u64) {
+        self.request = Box::new(self.announce(Some(Event::Stopped), left, uploaded, downloaded))
     }
 
     /// Tell the tracker that you have completed the download
-    pub fn finish(&mut self) {
-        self.request = Box::new(self.announce(Some(Event::Completed)))
+    pub fn finish(&mut self, left: u64, uploaded: u64, downloaded: u64) {
+        self.request = Box::new(self.announce(Some(Event::Completed), left, uploaded, downloaded))
     }
 
     /// Update the tracker on your download status, and get more peers
-    pub fn refresh(&mut self) {
-        self.request = Box::new(self.announce(None))
+    pub fn refresh(&mut self, left: u64, uploaded: u64, downloaded: u64) {
+        self.request = Box::new(self.announce(None, left, uploaded, downloaded))
     }
 
-    fn announce(&self, event: Option<Event>) -> impl Future<Item=TrackerResponse, Error=TrackerError> {
+    fn announce(&self, event: Option<Event>, left: u64, uploaded: u64, downloaded: u64) -> impl Future<Item=TrackerResponse, Error=TrackerError> {
         // build the tracker query string
         let mut req_uri = self.tracker_uri.clone();
-        // scope to release state lock once we are done with its fields
-        {
-            let state = self.state.read().expect("Shared state lock was poisoned!");
-            let encoded_info_hash = percent_encode(&self.info_hash, QUERY_ENCODE_SET).to_string();
-            let encoded_peer_id = percent_encode(&state.peer_id, QUERY_ENCODE_SET).to_string();
-            let query = hashmap! {
+        let encoded_info_hash = percent_encode(&self.info_hash, QUERY_ENCODE_SET).to_string();
+        let encoded_peer_id = percent_encode(&self.peer_id, QUERY_ENCODE_SET).to_string();
+        let query = hashmap! {
             "info_hash" => encoded_info_hash,
             "peer_id" => encoded_peer_id,
             "port" => self.port.to_string(),
-            "uploaded" => state.uploaded.to_string(),
-            "downloaded" => state.downloaded.to_string(),
-            "left" => state.left.to_string(),
+            "uploaded" => uploaded.to_string(),
+            "downloaded" => downloaded.to_string(),
+            "left" => left.to_string(),
             "compact" => 0.to_string(),
         };
-            req_uri.push('?');
-            query.iter().fold(&mut req_uri, |s, (k, v)| {
-                s.push_str(k);
-                s.push('=');
-                s.push_str(&v);
-                s.push('&');
-                s
-            });
-        }
+        req_uri.push('?');
+        query.iter().fold(&mut req_uri, |s, (k, v)| {
+            s.push_str(k);
+            s.push('=');
+            s.push_str(&v);
+            s.push('&');
+            s
+        });
         match event {
             Some(e) => {
                 req_uri.push_str("event");

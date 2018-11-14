@@ -1,6 +1,8 @@
+extern crate bit_vec;
 extern crate clap;
 extern crate crypto;
 extern crate derive_error;
+extern crate futures;
 extern crate hyper;
 extern crate log;
 extern crate maplit;
@@ -8,6 +10,7 @@ extern crate percent_encoding;
 extern crate rand;
 extern crate simple_logger;
 extern crate tokio;
+extern crate replace_with;
 
 use boostencode::{FromValue, Value};
 use clap::App;
@@ -27,6 +30,8 @@ mod boostencode;
 mod metainfo;
 mod tracker;
 mod server;
+mod piece;
+mod peer;
 
 fn main() {
     let yaml = load_yaml!("cli.yml");
