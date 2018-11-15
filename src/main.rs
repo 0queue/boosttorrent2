@@ -1,4 +1,6 @@
+extern crate bit_vec;
 extern crate byteorder;
+extern crate bytes;
 #[warn(unused_extern_crates)]
 extern crate clap;
 extern crate crypto;
@@ -11,7 +13,6 @@ extern crate reqwest;
 extern crate serde;
 extern crate simple_logger;
 extern crate tokio;
-extern crate bytes;
 
 use std::{
     fs::File,
