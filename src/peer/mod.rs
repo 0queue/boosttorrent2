@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, NetworkEndian};
-use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::codec::Framed;
 use tokio::net::TcpStream;
 use tokio::prelude::{Future, Sink, Stream};
@@ -22,6 +22,9 @@ pub struct Peer {
     pub output: UnboundedSender<u8>,
     pub input: UnboundedReceiver<u8>,
 }
+
+pub type Tx<T> = UnboundedSender<T>;
+pub type Rx<T> = UnboundedReceiver<T>;
 
 impl FromValue for PeerInfo {
     type Error = String;
@@ -62,11 +65,14 @@ impl PeerInfo {
         }).collect()
     }
 
-    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20]) -> () {
+    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20]) -> (Tx<protocol::Message>, Rx<protocol::Message>) {
         // build a future that handshakes a peer
         // then wraps the socket in a peer protocol codec and writes to a channel
 
-        TcpStream::connect(&self.addr).and_then(|socket| {
+        let (input_sender, input_receiver) = mpsc::unbounded();
+        let (output_sender, output_receiver) = mpsc::unbounded();
+
+        let peer = TcpStream::connect(&self.addr).and_then(move |socket| {
             let (write, read) = Framed::new(socket, handshake::HandshakeCodec::new()).split();
 
             write.send((info_hash, peer_id).into())
@@ -75,16 +81,25 @@ impl PeerInfo {
                         .map(|(h, r)| (h, r.into_inner(), write))
                         .map_err(|(e, _)| e)
                 })
-                .and_then(|(maybe_handshake, read, write)| match maybe_handshake {
+                .and_then(move |(maybe_handshake, read, write)| match maybe_handshake {
                     Some(ref handshake) if handshake.info_hash == info_hash => Ok(read.reunite(write).unwrap().into_inner()),
                     _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "invalid handshake"))
                 })
-                .and_then(|_socket| {
-                    // protocol codec time
-                    Ok(())
+                .map_err(|x| ())
+                .and_then(move |socket| {
+                    let (socket_output, socket_input) = Framed::new(socket, protocol::MessageCodec::new()).split();
+
+                    let output = input_receiver.forward(socket_output.sink_map_err(|err| println!("socket output err: {}", err)));
+                    let input = output_sender
+                        .sink_map_err(|err| println!("Send error: {}", err))
+                        .send_all(socket_input.map_err(|err| println!("receive error: {}", err)));
+
+                    output.join(input).map(|_| ())
                 })
         });
 
-        ()
+        tokio::spawn(peer);
+
+        (input_sender, output_receiver)
     }
 }
