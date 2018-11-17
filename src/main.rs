@@ -23,7 +23,6 @@ use clap::App;
 use clap::load_yaml;
 use futures::Future;
 use futures::stream::Stream;
-use futures::sync::mpsc;
 use log::{
     debug,
     error,
@@ -91,7 +90,7 @@ fn main() {
 
             ()
         })
-        .and_then(|a| {
+        .and_then(|_| {
             let (fp, rx) = file_progress::FileProgress::new();
 
             tokio::spawn(fp);
@@ -124,7 +123,6 @@ mod file_progress {
     use futures::Future;
     use futures::sink::Sink;
     use futures::sync::mpsc;
-    use futures::sync::oneshot;
     use rand::Rng;
 
     pub struct FileProgress {
@@ -152,7 +150,7 @@ mod file_progress {
         fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
             if self.progress >= 100.0f64 {
                 self.tx.unbounded_send(()).unwrap();
-                self.tx.close();
+                let _ = self.tx.close();
                 return Ok(Async::Ready(()));
             }
 

@@ -1,5 +1,3 @@
-use std::io::Read;
-use std::io::Write;
 use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, NetworkEndian};
@@ -81,7 +79,7 @@ impl PeerInfo {
                     Some(ref handshake) if handshake.info_hash == info_hash => Ok(read.reunite(write).unwrap().into_inner()),
                     _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "invalid handshake"))
                 })
-                .and_then(|socket| {
+                .and_then(|_socket| {
                     // protocol codec time
                     Ok(())
                 })
