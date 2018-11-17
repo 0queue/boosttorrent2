@@ -69,36 +69,43 @@ impl PeerInfo {
         // build a future that handshakes a peer
         // then wraps the socket in a peer protocol codec and writes to a channel
 
+        // should find out how to close all these things at some point
+
         let (input_sender, input_receiver) = mpsc::unbounded();
         let (output_sender, output_receiver) = mpsc::unbounded();
 
-        let peer = TcpStream::connect(&self.addr).and_then(move |socket| {
-            let (write, read) = Framed::new(socket, handshake::HandshakeCodec::new()).split();
+        let peer = TcpStream::connect(&self.addr)
+            .and_then(move |socket| {
+                let (write, read) = Framed::new(socket, handshake::HandshakeCodec::new()).split();
 
-            write.send((info_hash, peer_id).into())
-                .and_then(|write| {
-                    read.take(1).into_future()
-                        .map(|(h, r)| (h, r.into_inner(), write))
-                        .map_err(|(e, _)| e)
-                })
-                .and_then(move |(maybe_handshake, read, write)| match maybe_handshake {
-                    Some(ref handshake) if handshake.info_hash == info_hash => Ok(read.reunite(write).unwrap().into_inner()),
-                    _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "invalid handshake"))
-                })
-                .map_err(|x| ())
-                .and_then(move |socket| {
-                    let (socket_output, socket_input) = Framed::new(socket, protocol::MessageCodec::new()).split();
+                write.send((info_hash, peer_id).into())
+                    .map(|write| (write, read))
+            })
+            .and_then(|(write, read)| {
+                read.take(1).into_future()
+                    .map(|(handshake, read)| (handshake, read.into_inner(), write))
+                    .map_err(|(e, _)| e)
+            })
+            .and_then(move |(maybe_handshake, read, write)| match maybe_handshake {
+                Some(ref handshake) if handshake.info_hash == info_hash => futures::future::ok(read.reunite(write).unwrap().into_inner()),
+                _ => {
+                    println!("invalid handshake");
+                    futures::future::err(std::io::Error::new(std::io::ErrorKind::Other, "invalid handshake"))
+                }
+            })
+            .map_err(|e| println!("error: {}", e))
+            .and_then(|socket| {
+                let (socket_output, socket_input) = Framed::new(socket, protocol::MessageCodec::new()).split();
 
-                    let output = input_receiver.forward(socket_output.sink_map_err(|err| println!("socket output err: {}", err)));
-                    let input = output_sender
-                        .sink_map_err(|err| println!("Send error: {}", err))
-                        .send_all(socket_input.map_err(|err| println!("receive error: {}", err)));
+                let output = input_receiver.forward(socket_output.sink_map_err(|e| println!("socket output error: {}", e)));
+                let input = socket_input
+                    .map_err(|e| println!("socket receive error: {}", e))
+                    .forward(output_sender.sink_map_err(|e| println!("output send error: {}", e)));
 
-                    output.join(input).map(|_| ())
-                })
-        });
+                output.join(input)
+            });
 
-        tokio::spawn(peer);
+        tokio::spawn(peer.map(|_| ()));
 
         (input_sender, output_receiver)
     }
