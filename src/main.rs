@@ -1,4 +1,6 @@
 extern crate bit_vec;
+extern crate byteorder;
+extern crate bytes;
 extern crate clap;
 extern crate crypto;
 extern crate derive_error;
@@ -8,9 +10,9 @@ extern crate log;
 extern crate maplit;
 extern crate percent_encoding;
 extern crate rand;
+extern crate replace_with;
 extern crate simple_logger;
 extern crate tokio;
-extern crate replace_with;
 
 use boostencode::{FromValue, Value};
 use clap::App;

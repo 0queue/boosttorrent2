@@ -12,6 +12,7 @@ use tokio::{
 };
 use bit_vec::BitVec;
 
+mod message;
 
 /// A connection to a peer.  Can download pieces from this connection
 pub struct Peer {
