@@ -16,7 +16,7 @@ use std::str::FromStr;
 use tokio::{
     io::Error,
     net::{
-        Incoming,
+        tcp::Incoming,
         TcpListener,
     },
     prelude::{
@@ -41,6 +41,7 @@ type BoxedStream<T> = Box<dyn Stream<Item=T, Error=()> + Send>;
 /// write pieces to the file.  This is "main" for a client
 pub struct Server {
     peer_id: [u8; 20],
+    info_hash: [u8; 20],
     uploaded: u64,
     uploaded_stream: BoxedStream<u32>,
     downloaded: u64,
@@ -58,12 +59,14 @@ impl Server {
         let mut tracker = Tracker::new(
             peer_id.clone(),
             meta.announce,
-            meta.info_hash,
+            meta.info_hash.clone(),
             6888,
         );
+        let info_hash = meta.info_hash;
         tracker.start(download_size);
         Server {
             peer_id,
+            info_hash,
             uploaded: 0,
             uploaded_stream: Box::new(stream::empty()),
             downloaded: 0,
@@ -119,7 +122,13 @@ impl Future for Server {
                     replace_with(&mut self.piece_stream,
                                  || Box::new(stream::empty()),
                                  |s| Box::new(s.select(piece_receiver)));
-                    let peer = Peer::new(conn, up_sender, down_sender, piece_sender);
+                    let peer = Peer::new(conn,
+                                         up_sender,
+                                         down_sender,
+                                         piece_sender,
+                                         self.info_hash.clone(),
+                                         self.peer_id.clone(),
+                                         false);
                     spawn(peer);
                 }
                 Err(e) => {
