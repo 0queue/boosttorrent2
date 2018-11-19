@@ -28,7 +28,22 @@ impl Piece {
     }
 }
 
+pub struct Handshake {
+    pub info_hash: [u8; 20],
+    pub peer_id: [u8; 20],
+}
+
+impl From<([u8; 20], [u8; 20])> for Handshake {
+    fn from(pair: ([u8; 20], [u8; 20])) -> Self {
+        Handshake {
+            info_hash: pair.0,
+            peer_id: pair.1,
+        }
+    }
+}
+
 pub enum Message {
+    Handshake(Handshake),
     Choke,
     Unchoke,
     Interested,
@@ -49,77 +64,77 @@ impl MessageCodec {
     }
 }
 
-pub struct Handshake {
-    pub info_hash: [u8; 20],
-    pub peer_id: [u8; 20],
-}
-
-impl From<([u8; 20], [u8; 20])> for Handshake {
-    fn from(pair: ([u8; 20], [u8; 20])) -> Self {
-        Handshake {
-            info_hash: pair.0,
-            peer_id: pair.1,
-        }
-    }
-}
-
-pub struct HandshakeCodec;
-
-impl HandshakeCodec {
-    pub fn new() -> HandshakeCodec {
-        HandshakeCodec {}
-    }
-}
-
 impl Decoder for MessageCodec {
     type Item = Message;
     type Error = io::Error;
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        // return Ok(None) if a frame is not fully available yet
-        if src.len() < 4 {
-            return Ok(None);
-        }
-        let length = NetworkEndian::read_u32(&src.split_to(4)) as usize;
-        if src.len() < length {
-            return Ok(None);
-        }
-        let mut buf = src.split_to(length).into_buf();
-        let type_id = buf.get_u8();
 
-        let message = match type_id {
-            0 => Some(Message::Choke),
-            1 => Some(Message::Unchoke),
-            2 => Some(Message::Interested),
-            3 => Some(Message::NotInterested),
-            4 => Some(Message::Have(buf.get_u32_be())),
-            5 => {
-                let mut bytes = Vec::with_capacity(length - 1);
-                buf.copy_to_slice(&mut bytes);
-                Some(Message::Bitfield(bit_vec::BitVec::from_bytes(&bytes)))
+        if src.len() >= (1 + 19 + 8 + 20 + 20) && &src[0..20] == b"\x13BitTorrent protocol" {
+            let src = src.split_to(1 + 19 + 8 + 20 + 20);
+            let mut buf = src.into_buf();
+            if buf.get_u8() != 19 {
+                return Err(io::Error::new(io::ErrorKind::Other, "invalid handshake name length"));
             }
-            6 => {
-                let index = buf.get_u32_be();
-                let begin = buf.get_u32_be();
-                let length = buf.get_u32_be();
-                Some(Message::Request((index, begin, length).into()))
-            }
-            7 => {
-                let index = buf.get_u32_be();
-                let begin = buf.get_u32_be();
-                let block = buf.collect();
-                Some(Message::Piece(Piece::new(index, begin, block)))
-            }
-            8 => {
-                let index = buf.get_u32_be();
-                let begin = buf.get_u32_be();
-                let length = buf.get_u32_be();
-                Some(Message::Cancel((index, begin, length).into()))
-            }
-            _ => None,
-        };
 
-        message.ok_or(io::Error::new(io::ErrorKind::Other, "Invalid message id"))
-            .map(|m| Some(m))
+            let mut name: [u8; 19] = [0; 19];
+            buf.copy_to_slice(&mut name);
+            if name != b"BitTorrent protocol".as_ref() {
+                return Err(io::Error::new(io::ErrorKind::Other, "invalid protocol name"));
+            }
+
+            // read reserved bytes
+            buf.copy_to_slice(&mut name[0..8]);
+
+            let mut info_hash: [u8; 20] = [0; 20];
+            buf.copy_to_slice(&mut info_hash);
+
+            let mut peer_id: [u8; 20] = [0; 20];
+            buf.copy_to_slice(&mut peer_id);
+
+            Ok(Some(Message::Handshake((info_hash, peer_id).into())))
+        } else {
+            let length = NetworkEndian::read_u32(&src.split_to(4)) as usize;
+            if src.len() < length {
+                return Ok(None);
+            }
+            let mut buf = src.split_to(length).into_buf();
+            let type_id = buf.get_u8();
+
+            let message = match type_id {
+                0 => Some(Message::Choke),
+                1 => Some(Message::Unchoke),
+                2 => Some(Message::Interested),
+                3 => Some(Message::NotInterested),
+                4 => Some(Message::Have(buf.get_u32_be())),
+                5 => {
+                    let mut bytes = Vec::with_capacity(length - 1);
+                    buf.copy_to_slice(&mut bytes);
+                    Some(Message::Bitfield(bit_vec::BitVec::from_bytes(&bytes)))
+                }
+                6 => {
+                    let index = buf.get_u32_be();
+                    let begin = buf.get_u32_be();
+                    let length = buf.get_u32_be();
+                    Some(Message::Request((index, begin, length).into()))
+                }
+                7 => {
+                    let index = buf.get_u32_be();
+                    let begin = buf.get_u32_be();
+                    let block = buf.collect();
+                    Some(Message::Piece(Piece::new(index, begin, block)))
+                }
+                8 => {
+                    let index = buf.get_u32_be();
+                    let begin = buf.get_u32_be();
+                    let length = buf.get_u32_be();
+                    Some(Message::Cancel((index, begin, length).into()))
+                }
+                _ => None,
+            };
+
+            message.ok_or(io::Error::new(io::ErrorKind::Other, "Invalid message id"))
+                .map(|m| Some(m))
+        }
     }
 }
 
@@ -129,6 +144,15 @@ impl Encoder for MessageCodec {
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match item {
+            Message::Handshake(item) => {
+                dst.reserve(1 + 19 + 8 + 20 + 20);
+
+                dst.put(19u8);
+                dst.put(b"BitTorrent protocol".as_ref());
+                dst.put([0u8; 8].as_ref());
+                dst.put(item.info_hash.as_ref());
+                dst.put(item.peer_id.as_ref());
+            },
             Message::Choke => length_and_id(dst, 1, 0),
             Message::Unchoke => length_and_id(dst, 1, 1),
             Message::Interested => length_and_id(dst, 1, 2),
@@ -168,62 +192,4 @@ fn length_and_id(dst: &mut BytesMut, length: u32, id: u8) {
     dst.reserve((length + 4) as usize);
     dst.put_u32_be(length);
     dst.put_u8(id);
-}
-
-
-/// Bittorrent handshake structure:
-/// length byte (19)
-/// 19 bytes ('BitTorrent protocol')
-/// 8 empty bytes
-/// 20 bytes info_hash
-/// 20 bytes peer_id
-impl Decoder for HandshakeCodec {
-    type Item = Handshake;
-    type Error = io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        // The entire handshake isn't in yet, so return None
-        if src.len() < (1 + 19 + 8 + 20 + 20) {
-            return Ok(None);
-        }
-        let src = src.split_to(1 + 19 + 8 + 20 + 20);
-        let mut buf = src.into_buf();
-        if buf.get_u8() != 19 {
-            return Err(io::Error::new(io::ErrorKind::Other, "invalid handshake name length"));
-        }
-
-        let mut name: [u8; 19] = [0; 19];
-        buf.copy_to_slice(&mut name);
-        if name != b"BitTorrent protocol".as_ref() {
-            return Err(io::Error::new(io::ErrorKind::Other, "invalid protocol name"));
-        }
-
-        // read reserved bytes
-        buf.copy_to_slice(&mut name[0..8]);
-
-        let mut info_hash: [u8; 20] = [0; 20];
-        buf.copy_to_slice(&mut info_hash);
-
-        let mut peer_id: [u8; 20] = [0; 20];
-        buf.copy_to_slice(&mut peer_id);
-
-        Ok(Some((info_hash, peer_id).into()))
-    }
-}
-
-impl Encoder for HandshakeCodec {
-    type Item = Handshake;
-    type Error = io::Error;
-
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.reserve(1 + 19 + 8 + 20 + 20);
-
-        dst.put(19u8);
-        dst.put(b"BitTorrent protocol".as_ref());
-        dst.put([0u8; 8].as_ref());
-        dst.put(item.info_hash.as_ref());
-        dst.put(item.peer_id.as_ref());
-
-        Ok(())
-    }
 }
