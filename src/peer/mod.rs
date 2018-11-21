@@ -7,6 +7,7 @@ use tokio::net::TcpStream;
 use tokio::prelude::{Future, Sink, Stream};
 
 use boostencode::{FromValue, Value};
+use peer::protocol::Message;
 
 mod handshake;
 pub mod protocol;
@@ -22,9 +23,6 @@ pub struct Peer {
     pub output: UnboundedSender<u8>,
     pub input: UnboundedReceiver<u8>,
 }
-
-pub type Tx<T> = UnboundedSender<T>;
-pub type Rx<T> = UnboundedReceiver<T>;
 
 impl FromValue for PeerInfo {
     type Error = String;
@@ -65,14 +63,13 @@ impl PeerInfo {
         }).collect()
     }
 
-    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20], rt: &mut tokio::runtime::Runtime) -> (Tx<protocol::Message>, Rx<protocol::Message>) {
+    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20], output_sender: UnboundedSender<Message>) -> (UnboundedSender<Message>, impl Future<Item = (), Error = ()>) {
         // build a future that handshakes a peer
         // then wraps the socket in a peer protocol codec and writes to a channel
 
         // should find out how to close all these things at some point
 
         let (input_sender, input_receiver) = mpsc::unbounded();
-        let (output_sender, output_receiver) = mpsc::unbounded();
 
         let peer = TcpStream::connect(&self.addr)
             .and_then(move |socket| {
@@ -103,11 +100,9 @@ impl PeerInfo {
                     .forward(output_sender.sink_map_err(|e| println!("output send error: {}", e)));
 
                 // oof that error type
-                output.select2(input).map_err(|e| println!("peer io error"))
+                output.select2(input).map_err(|_| println!("peer io error"))
             });
 
-        rt.spawn(peer.map(|_| ()));
-
-        (input_sender, output_receiver)
+        (input_sender, peer.map(|_| ()))
     }
 }

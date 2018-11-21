@@ -117,21 +117,26 @@ fn main() {
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
 
-    let (mut tx, rx) = peer_info.connect(*b"ThisIsGoodForBitcoin", gen_peer_id(), &mut rt);
+    let (peer_tx, rx) = futures::sync::mpsc::unbounded();
+
+    let (mut tx, peer_future) = peer_info.connect(*b"ThisIsGoodForBitcoin", gen_peer_id(), peer_tx.clone());
+
+    rt.spawn(peer_future);
 
     println!("choking");
     tx.unbounded_send(peer::protocol::Message::Choke)
-        .map_err(|e| println!("send error: {:?}", e));
+        .map_err(|e| println!("send error: {:?}", e))
+        .unwrap();
 
     std::thread::spawn(move || {
         use futures::Sink;
         println!("Closing in five seconds");
         std::thread::sleep(std::time::Duration::from_secs(5));
         println!("Closing");
-        tx.close();
+        tx.close().unwrap();
     });
 
-    rt.shutdown_on_idle().wait();
+    rt.shutdown_on_idle().wait().unwrap();
     println!("done");
 }
 
