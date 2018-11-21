@@ -9,12 +9,12 @@ use tokio::prelude::{Future, Sink, Stream};
 use boostencode::{FromValue, Value};
 
 mod handshake;
-mod protocol;
+pub mod protocol;
 
 #[derive(Debug)]
 pub struct PeerInfo {
-    addr: SocketAddr,
-    peer_id: Option<[u8; 20]>,
+    pub addr: SocketAddr,
+    pub peer_id: Option<[u8; 20]>,
 }
 
 pub struct Peer {
@@ -65,7 +65,7 @@ impl PeerInfo {
         }).collect()
     }
 
-    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20]) -> (Tx<protocol::Message>, Rx<protocol::Message>) {
+    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20], rt: &mut tokio::runtime::Runtime) -> (Tx<protocol::Message>, Rx<protocol::Message>) {
         // build a future that handshakes a peer
         // then wraps the socket in a peer protocol codec and writes to a channel
 
@@ -96,16 +96,17 @@ impl PeerInfo {
             .map_err(|e| println!("error: {}", e))
             .and_then(|socket| {
                 let (socket_output, socket_input) = Framed::new(socket, protocol::MessageCodec::new()).split();
-
+                println!("valid handshake, reframing");
                 let output = input_receiver.forward(socket_output.sink_map_err(|e| println!("socket output error: {}", e)));
                 let input = socket_input
                     .map_err(|e| println!("socket receive error: {}", e))
                     .forward(output_sender.sink_map_err(|e| println!("output send error: {}", e)));
 
-                output.join(input)
+                // oof that error type
+                output.select2(input).map_err(|e| println!("peer io error"))
             });
 
-        tokio::spawn(peer.map(|_| ()));
+        rt.spawn(peer.map(|_| ()));
 
         (input_sender, output_receiver)
     }

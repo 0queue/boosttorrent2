@@ -4,6 +4,7 @@ use byteorder::{ByteOrder, NetworkEndian};
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::codec::{Decoder, Encoder};
 
+#[derive(Debug)]
 pub struct Request {
     index: u32,
     begin: u32,
@@ -16,6 +17,7 @@ impl From<(u32, u32, u32)> for Request {
     }
 }
 
+#[derive(Debug)]
 pub struct Piece {
     index: u32,
     begin: u32,
@@ -28,6 +30,7 @@ impl Piece {
     }
 }
 
+#[derive(Debug)]
 pub enum Message {
     Choke,
     Unchoke,
@@ -53,6 +56,13 @@ impl Decoder for MessageCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+
+        // TODO hack to make sure we have bytes
+        // not sure why sometimes it gives us an empty buffer
+        if src.is_empty() {
+            return Ok(None);
+        }
+
         let length = NetworkEndian::read_u32(&src.split_to(4)) as usize;
         let type_id = src.split_to(1)[0];
 
@@ -85,6 +95,7 @@ impl Decoder for MessageCodec {
         };
 
         if !src.is_empty() {
+            println!("extra bytes {:?}", src);
             return Err(io::Error::new(io::ErrorKind::Other, "Extra bytes"));
         }
 
@@ -98,7 +109,8 @@ impl Encoder for MessageCodec {
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        // Note: maybe should reserve capacity?
+        // TODO actually calculate sizes, or just extend all the time
+        dst.resize(5, 0);
         match item {
             Message::Choke => length_and_id(dst, 1, 0),
             Message::Unchoke => length_and_id(dst, 1, 1),
@@ -138,5 +150,5 @@ impl Encoder for MessageCodec {
 
 fn length_and_id(dst: &mut BytesMut, length: u32, id: u8) {
     NetworkEndian::write_u32(dst, length);
-    dst.put_u8(id);
+    dst[4] = id;
 }

@@ -3,6 +3,10 @@ name = "boosttorrent2"
 version = "0.1.0"
 authors = ["Thomas Harris <teh019283@gmail.com>", "Jake Sandler <jsandler18@gmail.com>"]
 
+[features]
+default = []
+experiment = []
+
 [dependencies]
 derive-error = "0.0.4"
 rust-crypto = "0.2.36"

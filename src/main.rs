@@ -39,6 +39,7 @@ mod metainfo;
 mod tracker2;
 mod peer;
 
+#[cfg(not(feature = "experiment"))]
 fn main() {
     let yaml = load_yaml!("cli.yml");
     let matches = App::from_yaml(yaml).get_matches();
@@ -105,6 +106,33 @@ fn main() {
         });
 
     tokio::run(coordinator);
+}
+
+#[cfg(feature = "experiment")]
+fn main() {
+    let peer_info = peer::PeerInfo {
+        addr: std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), 8080),
+        peer_id: None,
+    };
+
+    let mut rt = tokio::runtime::Runtime::new().unwrap();
+
+    let (mut tx, rx) = peer_info.connect(*b"ThisIsGoodForBitcoin", gen_peer_id(), &mut rt);
+
+    println!("choking");
+    tx.unbounded_send(peer::protocol::Message::Choke)
+        .map_err(|e| println!("send error: {:?}", e));
+
+    std::thread::spawn(move || {
+        use futures::Sink;
+        println!("Closing in five seconds");
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        println!("Closing");
+        tx.close();
+    });
+
+    rt.shutdown_on_idle().wait();
+    println!("done");
 }
 
 fn gen_peer_id() -> [u8; 20] {
