@@ -7,10 +7,12 @@ use tokio::net::TcpStream;
 use tokio::prelude::{Future, Sink, Stream};
 
 use boostencode::{FromValue, Value};
+use peer::channel_sink::ChannelSink;
 use peer::protocol::Message;
 
 mod handshake;
 pub mod protocol;
+mod channel_sink;
 
 #[derive(Debug)]
 pub struct PeerInfo {
@@ -63,7 +65,7 @@ impl PeerInfo {
         }).collect()
     }
 
-    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20], output_sender: UnboundedSender<Message>) -> (UnboundedSender<Message>, impl Future<Item = (), Error = ()>) {
+    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20], output_sender: crossbeam_channel::Sender<Message>) -> (UnboundedSender<Message>, impl Future<Item=(), Error=()>) {
         // build a future that handshakes a peer
         // then wraps the socket in a peer protocol codec and writes to a channel
 
@@ -97,7 +99,7 @@ impl PeerInfo {
                 let output = input_receiver.forward(socket_output.sink_map_err(|e| println!("socket output error: {}", e)));
                 let input = socket_input
                     .map_err(|e| println!("socket receive error: {}", e))
-                    .forward(output_sender.sink_map_err(|e| println!("output send error: {}", e)));
+                    .forward(ChannelSink::new(output_sender).sink_map_err(|e| println!("output send error: {}", e)));
 
                 // oof that error type
                 output.select2(input).map_err(|_| println!("peer io error"))

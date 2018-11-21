@@ -3,6 +3,7 @@ extern crate byteorder;
 extern crate bytes;
 #[warn(unused_extern_crates)]
 extern crate clap;
+extern crate crossbeam_channel;
 extern crate crypto;
 extern crate derive_error;
 extern crate futures;
@@ -117,9 +118,13 @@ fn main() {
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
 
-    let (peer_tx, rx) = futures::sync::mpsc::unbounded();
+    let (peer_tx, mut rx) = crossbeam_channel::unbounded();
 
     let (mut tx, peer_future) = peer_info.connect(*b"ThisIsGoodForBitcoin", gen_peer_id(), peer_tx.clone());
+
+    // obviously only drop once no more peers are expected to connect
+    // but for this experiment we have to drop it so we can exit after a time;
+    drop(peer_tx);
 
     rt.spawn(peer_future);
 
@@ -136,7 +141,22 @@ fn main() {
         tx.close().unwrap();
     });
 
+    loop {
+        match rx.try_recv() {
+            Ok(message) => println!("Received: {:?}", message),
+            Err(crossbeam_channel::TryRecvError::Empty) => {
+                // nothing
+            }
+            Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+        }
+
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    println!("waiting for runtime");
     rt.shutdown_on_idle().wait().unwrap();
+
     println!("done");
 }
 
