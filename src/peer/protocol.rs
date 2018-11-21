@@ -57,8 +57,6 @@ impl Decoder for MessageCodec {
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
 
-        // TODO hack to make sure we have bytes
-        // not sure why sometimes it gives us an empty buffer
         if src.is_empty() {
             return Ok(None);
         }
