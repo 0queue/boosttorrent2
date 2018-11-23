@@ -10,7 +10,6 @@ extern crate log;
 extern crate maplit;
 extern crate percent_encoding;
 extern crate rand;
-extern crate replace_with;
 extern crate simple_logger;
 extern crate tokio;
 

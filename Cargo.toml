@@ -15,7 +15,6 @@ simple_logger = "1.0.1"
 rand = "0.5.5"
 bit-vec = "0.5.0"
 futures = "0.1.25"
-replace_with = "0.1.1"
 byteorder = "1.2.7"
 bytes = "0.4.11"
 

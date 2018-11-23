@@ -1,7 +1,9 @@
 use piece::Piece;
 use futures::sync::mpsc::{
-    Receiver,
-    Sender,
+    UnboundedReceiver,
+    UnboundedSender,
+    SendError,
+    unbounded,
 };
 use tokio::{
     net::TcpStream,
@@ -11,97 +13,218 @@ use tokio::{
         Stream,
         Sink,
         AsyncSink,
+        future::{
+            Either,
+            ok
+        },
     },
     codec::Framed,
+    spawn,
 };
 use bit_vec::BitVec;
 use log::error;
 
 mod message;
 
-/// A connection to a peer.  Can download pieces from this connection
-pub struct Peer {
-    conn: Framed<TcpStream, message::MessageCodec>,
-    uploaded_sender: Sender<u32>,
-    downloaded_sender: Sender<u32>,
-    // When a piece is done, the peer will send the piece to the receiver, along with what pieces
-    // this peer has, and a way to send a new piece back
-    finished_piece_sender: Sender<(Piece, Sender<Piece>, BitVec)>,
-    peers_pieces: BitVec,
-    info_hash: [u8; 20],
-    peer_id: [u8; 20],
-    initiates: bool,
+type Rx<T> = UnboundedReceiver<T>;
+type Tx<T> = UnboundedSender<T>;
+
+enum Command {
+    Choke,
+    Unchoke,
+    Interested,
+    NotInterested,
+    Piece(Piece),
+    Have(u32),
+    Cancel,
+    Disconnect,
 }
 
-impl Peer {
-    pub fn new(conn: TcpStream,
-               uploaded_sender: Sender<u32>,
-               downloaded_sender: Sender<u32>,
-               finished_piece_sender: Sender<(Piece, Sender<Piece>, BitVec)>,
-               info_hash: [u8; 20],
-               peer_id: [u8; 20],
-               initiates: bool) -> Self {
-        let mut conn = Framed::new(conn, message::MessageCodec::new());
-        if initiates {
-            let _res = conn.start_send(message::Message::Handshake((info_hash.clone(), peer_id.clone()).into()));
-        }
-        Peer {
+/// presents a simple interface for interacting with a peer task
+pub struct Peer {
+    downloaded_stream: Rx<u32>,
+    uploaded_stream: Rx<u32>,
+    have_stream: Rx<u32>,
+    have_map: BitVec,
+    piece_stream: Rx<Piece>,
+    command_sink: Tx<Command>,
+}
+
+/// An asynchronous task to interact with a peer
+struct PeerTask {
+    conn: Framed<TcpStream, message::MessageCodec>,
+    info_hash: [u8; 20],
+    download_sink: Tx<u32>,
+    upload_sink: Tx<u32>,
+    piece_sink: Tx<Piece>,
+    have_sink: Tx<u32>,
+    command_stream: Rx<Command>,
+}
+
+impl PeerTask {
+    fn new(conn: Framed<TcpStream, message::MessageCodec>,
+           info_hash: [u8; 20],
+           download_sink: Tx<u32>,
+           upload_sink: Tx<u32>,
+           piece_sink: Tx<Piece>,
+           have_sink: Tx<u32>,
+           command_stream: Rx<Command>) -> Self {
+        PeerTask {
             conn,
-            uploaded_sender,
-            downloaded_sender,
-            finished_piece_sender,
-            peers_pieces: BitVec::new(),
             info_hash,
-            peer_id,
-            initiates,
+            download_sink,
+            upload_sink,
+            piece_sink,
+            have_sink,
+            command_stream
         }
     }
 }
 
-// Peer can be spun into tasks
-impl Future for Peer {
+impl Peer {
+    pub fn new(conn: TcpStream, info_hash: [u8; 20], peer_id: [u8; 20]) -> Self {
+        let (downloaded_sink, downloaded_stream) = unbounded();
+        let (uploaded_sink, uploaded_stream) = unbounded();
+        let (piece_sink, piece_stream) = unbounded();
+        let (command_sink, command_stream) = unbounded();
+        let (have_sink, have_stream) = unbounded();
+        let mut conn = Framed::new(conn, message::MessageCodec::new());
+        conn.start_send(message::Message::Handshake((info_hash.clone(), peer_id).into()));
+        spawn(PeerTask::new(conn,
+                            info_hash,
+                            downloaded_sink,
+                            uploaded_sink,
+                            piece_sink,
+                            have_sink,
+                            command_stream));
+        Peer {
+            downloaded_stream,
+            uploaded_stream,
+            have_stream,
+            have_map: BitVec::new(),
+            piece_stream,
+            command_sink,
+        }
+    }
+
+    pub fn choke(&self) -> Result<(), SendError<Command>> {
+        self.command_sink.unbounded_send(Command::Choke)
+    }
+
+    pub fn unchoke(&self) -> Result<(), SendError<Command>> {
+        self.command_sink.unbounded_send(Command::Unchoke)
+    }
+
+    pub fn interested(&self) -> Result<(), SendError<Command>> {
+        self.command_sink.unbounded_send(Command::Interested)
+    }
+
+    pub fn uninterested(&self) -> Result<(), SendError<Command>> {
+        self.command_sink.unbounded_send(Command::NotInterested)
+    }
+
+    pub fn cancel_piece(&self) -> Result<(), SendError<Command>> {
+        self.command_sink.unbounded_send(Command::Cancel)
+    }
+
+    pub fn start_new_piece(&self, piece: Piece) -> Result<(), SendError<Command>> {
+        self.command_sink.unbounded_send(Command::Piece(piece))
+    }
+
+    pub fn get_have(&mut self) -> &BitVec {
+        // update the bitvec
+        loop {
+            match self.have_stream.poll() {
+                Ok(Async::Ready(Some(idx))) => {
+                    self.have_map.set(idx as usize, true);
+                },
+                _ => break
+            }
+        };
+        &self.have_map
+    }
+
+    pub fn have_new_piece(&mut self, piece_idx: u32) -> Result<(), SendError<Command>> {
+        self.command_sink.unbounded_send(Command::Have(piece_idx))
+    }
+
+    pub fn poll_uploaded(&mut self) -> Option<u32> {
+        self.uploaded_stream.poll().ok()
+            .and_then(|uploaded| match uploaded {
+                Async::NotReady => Some(0),
+                Async::Ready(Some(b)) => Some(b),
+                Async::Ready(None) => None
+            })
+    }
+
+    pub fn poll_downloaded(&mut self) -> Option<u32> {
+        self.downloaded_stream.poll().ok()
+            .and_then(|downloaded| match downloaded {
+                Async::NotReady => Some(0),
+                Async::Ready(Some(b)) => Some(b),
+                Async::Ready(None) => None
+            })
+    }
+
+    pub fn poll_piece(&mut self) -> Option<Async<Piece>> {
+        self.piece_stream.poll().ok()
+            .and_then(|piece| match piece {
+                Async::Ready(None) => None,
+                Async::Ready(Some(x)) => Some(Async::Ready(x)),
+                Async::NotReady => Some(Async::NotReady)
+            })
+    }
+}
+
+impl Future for PeerTask {
     type Item = ();
     type Error = ();
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
+        // Poll for incoming messages until there are no more
         loop {
             match self.conn.poll() {
-                Ok(Async::NotReady) => break, // No more messages right now
-                Ok(Async::Ready(None)) => return Ok(Async::Ready(())), // connection closed, end the task
-                Ok(Async::Ready(Some(message))) => {
-                    match message {
-                        message::Message::Handshake(item) => {
-                            if self.info_hash != item.info_hash {
-                                error!("The info hash sent by a peer does not match ours");
+                Ok(Async::NotReady) => break,
+                Ok(Async::Ready(None)) => return Ok(Async::Ready(())),
+                Err(e) => {
+                    error!("Task encountered an error polling for messages from peer: {}", e);
+                    return Err(())
+                },
+                Ok(Async::Ready(Some(msg))) => {
+                    match msg {
+                        message::Message::Handshake(handshake) => {
+                            if handshake.info_hash == self.info_hash {
+                                error!("Peer handshake failed: Wrong info hash.");
                                 return Err(())
                             }
-                            if !self.initiates {
-                                let _res = self.conn.start_send(
-                                    message::Message::Handshake(
-                                        (self.info_hash.clone(), self.peer_id.clone()).into()
-                                    ));
-                            }
-                        }
-                        // TODO Process Message
+                        },
+                        // TODO do stuff for other messages
                         _ => {}
                     }
                 }
-                Err(e) => {
-                    error!("Connection to peer closed with error '{}'", e);
-                    return Err(());
-                }
             }
         };
-        // TODO maybe send a message using self.conn.start_send here
+        // Poll for commands from the server
         loop {
-            match self.conn.poll_complete() {
-                Ok(Async::NotReady) => break, // Can't make anymore progress
-                Ok(Async::Ready(())) => (), // All sends complete
+            match self.command_stream.poll() {
+                Ok(Async::NotReady) => break,
+                Ok(Async::Ready(None)) => return Ok(Async::Ready(())),
                 Err(e) => {
-                    error!("Connection to peer closed with error '{}'", e);
-                    return Err(());
+                    error!("Task encountered an error polling for messages from server");
+                    return Err(())
+                },
+                Ok(Async::Ready(Some(cmd))) => {
+                    match cmd {
+                        _ => () // TODO Handle commands from the server
+                    }
                 }
             }
+        }
+        // TODO figure out a message to send to the peer and call start_send
+        // poll the completion of the send
+        if let Err(e) = self.conn.poll_complete() {
+            error!("An error occured sending a message to the peer: {}", e);
+            return Err(())
         }
         Ok(Async::NotReady)
     }
