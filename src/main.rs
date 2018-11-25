@@ -120,7 +120,7 @@ fn main() {
 
     let (peer_tx, mut rx) = crossbeam_channel::unbounded();
 
-    let (mut tx, peer_future) = peer_info.connect(*b"ThisIsGoodForBitcoin", gen_peer_id(), peer_tx.clone());
+    let (peer_receiver, peer_future) = peer_info.connect(*b"ThisIsGoodForBitcoin", gen_peer_id(), peer_tx.clone());
 
     // obviously only drop once no more peers are expected to connect
     // but for this experiment we have to drop it so we can exit after a time;
@@ -128,17 +128,23 @@ fn main() {
 
     rt.spawn(peer_future);
 
+    let peer = peer_receiver.wait().unwrap();
+
     println!("choking");
-    tx.unbounded_send(peer::protocol::Message::Choke)
-        .map_err(|e| println!("send error: {:?}", e))
-        .unwrap();
+    peer.choke();
+
+    // for some reason required between sending two messages??
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    println!("am interested");
+    peer.interested(true);
 
     std::thread::spawn(move || {
         use futures::Sink;
         println!("Closing in five seconds");
         std::thread::sleep(std::time::Duration::from_secs(5));
         println!("Closing");
-        tx.close().unwrap();
+        peer.close();
     });
 
     loop {

@@ -1,7 +1,9 @@
+use std::cell::RefCell;
 use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, NetworkEndian};
 use futures::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use futures::sync::oneshot::{self, Receiver};
 use tokio::codec::Framed;
 use tokio::net::TcpStream;
 use tokio::prelude::{Future, Sink, Stream};
@@ -17,13 +19,36 @@ mod channel_sink;
 #[derive(Debug)]
 pub struct PeerInfo {
     pub addr: SocketAddr,
-    pub peer_id: Option<[u8; 20]>,
+    pub peer_id: Option<PeerId>,
 }
 
+pub type PeerId = [u8; 20];
+
 pub struct Peer {
-    info: PeerInfo,
-    pub output: UnboundedSender<u8>,
-    pub input: UnboundedReceiver<u8>,
+    peer_id: PeerId,
+    tx: RefCell<UnboundedSender<Message>>,
+}
+
+impl Peer {
+    pub fn new(peer_id: PeerId, tx: UnboundedSender<Message>) -> Peer {
+        Peer { peer_id, tx: RefCell::new(tx) }
+    }
+
+    pub fn choke(&self) {
+        self.tx.borrow().unbounded_send(Message::Choke)
+            .map_err(|e| println!("Peer {:?} choke error {}", self.peer_id, e))
+            .unwrap();
+    }
+
+    pub fn interested(&self, is_interested: bool) {
+        self.tx.borrow().unbounded_send(if is_interested { Message::Interested } else { Message::NotInterested })
+            .map_err(|e| println!("Peer {:?} interested error {}", self.peer_id, e))
+            .unwrap();
+    }
+
+    pub fn close(&self) {
+        self.tx.borrow_mut().close();
+    }
 }
 
 impl FromValue for PeerInfo {
@@ -65,19 +90,20 @@ impl PeerInfo {
         }).collect()
     }
 
-    pub fn connect(&self, info_hash: [u8; 20], peer_id: [u8; 20], output_sender: crossbeam_channel::Sender<Message>) -> (UnboundedSender<Message>, impl Future<Item=(), Error=()>) {
+    pub fn connect(&self, info_hash: [u8; 20], our_peer_id: [u8; 20], output_sender: crossbeam_channel::Sender<Message>) -> (Receiver<Peer>, impl Future<Item=(), Error=()>) {
         // build a future that handshakes a peer
         // then wraps the socket in a peer protocol codec and writes to a channel
 
         // should find out how to close all these things at some point
 
         let (input_sender, input_receiver) = mpsc::unbounded();
+        let (peer_sender, peer_receiver) = oneshot::channel();
 
         let peer = TcpStream::connect(&self.addr)
             .and_then(move |socket| {
                 let (write, read) = Framed::new(socket, handshake::HandshakeCodec::new()).split();
 
-                write.send((info_hash, peer_id).into())
+                write.send((info_hash, our_peer_id).into())
                     .map(|write| (write, read))
             })
             .and_then(|(write, read)| {
@@ -86,14 +112,15 @@ impl PeerInfo {
                     .map_err(|(e, _)| e)
             })
             .and_then(move |(maybe_handshake, read, write)| match maybe_handshake {
-                Some(ref handshake) if handshake.info_hash == info_hash => futures::future::ok(read.reunite(write).unwrap().into_inner()),
+                Some(ref handshake) if handshake.info_hash == info_hash => futures::future::ok((handshake.peer_id, read.reunite(write).unwrap().into_inner())),
                 _ => {
                     println!("invalid handshake");
                     futures::future::err(std::io::Error::new(std::io::ErrorKind::Other, "invalid handshake"))
                 }
             })
             .map_err(|e| println!("error: {}", e))
-            .and_then(|socket| {
+            .and_then(|(their_peer_id, socket)| {
+                peer_sender.send(Peer::new(their_peer_id, input_sender));
                 let (socket_output, socket_input) = Framed::new(socket, protocol::MessageCodec::new()).split();
                 println!("valid handshake, reframing");
                 let output = input_receiver.forward(socket_output.sink_map_err(|e| println!("socket output error: {}", e)));
@@ -105,6 +132,6 @@ impl PeerInfo {
                 output.select2(input).map_err(|_| println!("peer io error"))
             });
 
-        (input_sender, peer.map(|_| ()))
+        (peer_receiver, peer.map(|_| ()))
     }
 }
