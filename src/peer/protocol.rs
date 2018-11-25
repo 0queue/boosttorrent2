@@ -56,12 +56,19 @@ impl Decoder for MessageCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-
-        if src.is_empty() {
+        if src.len() < 4 {
             return Ok(None);
         }
 
-        let length = NetworkEndian::read_u32(&src.split_to(4)) as usize;
+        let length = NetworkEndian::read_u32(&src[..4]) as usize;
+
+        if src.len() < length {
+            return Ok(None);
+        }
+
+        // advance after len check so that the len check can happen again
+        // after more bytes are available
+        src.advance(4);
         let type_id = src.split_to(1)[0];
 
         let message = match type_id {
@@ -92,11 +99,6 @@ impl Decoder for MessageCodec {
             _ => None,
         };
 
-        if !src.is_empty() {
-            println!("extra bytes {:?}", src);
-            return Err(io::Error::new(io::ErrorKind::Other, "Extra bytes"));
-        }
-
         message.ok_or(io::Error::new(io::ErrorKind::Other, "Invalid message"))
             .map(|m| Some(m))
     }
@@ -107,38 +109,36 @@ impl Encoder for MessageCodec {
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        // TODO actually calculate sizes, or just extend all the time
-        dst.resize(5, 0);
         match item {
             Message::Choke => length_and_id(dst, 1, 0),
             Message::Unchoke => length_and_id(dst, 1, 1),
             Message::Interested => length_and_id(dst, 1, 2),
             Message::NotInterested => length_and_id(dst, 1, 3),
             Message::Have(piece_index) => {
-                length_and_id(dst, 5, 4);
-                NetworkEndian::write_u32(dst, piece_index);
+                length_and_id(dst, 4, 4);
+                dst.put_slice(&network_endian(piece_index))
             }
             Message::Bitfield(bit_vec) => {
-                length_and_id(dst, 1 + bit_vec.len() as u32, 5);
-                dst.extend_from_slice(&bit_vec.to_bytes());
+                length_and_id(dst, bit_vec.len() as u32, 5);
+                dst.put_slice(&bit_vec.to_bytes());
             }
             Message::Request(request) => {
-                length_and_id(dst, 13, 6);
-                NetworkEndian::write_u32(dst, request.index);
-                NetworkEndian::write_u32(dst, request.begin);
-                NetworkEndian::write_u32(dst, request.length);
+                length_and_id(dst, 12, 6);
+                dst.put_slice(&network_endian(request.index));
+                dst.put_slice(&network_endian(request.begin));
+                dst.put_slice(&network_endian(request.length));
             }
             Message::Piece(piece) => {
-                length_and_id(dst, 9 + piece.block.len() as u32, 7);
-                NetworkEndian::write_u32(dst, piece.index);
-                NetworkEndian::write_u32(dst, piece.begin);
-                dst.extend_from_slice(&piece.block);
+                length_and_id(dst, 8 + piece.block.len() as u32, 7);
+                dst.put_slice(&network_endian(piece.index));
+                dst.put_slice(&network_endian(piece.begin));
+                dst.put_slice(&piece.block);
             }
             Message::Cancel(request) => {
-                length_and_id(dst, 13, 8);
-                NetworkEndian::write_u32(dst, request.index);
-                NetworkEndian::write_u32(dst, request.begin);
-                NetworkEndian::write_u32(dst, request.length);
+                length_and_id(dst, 12, 8);
+                dst.put_slice(&network_endian(request.index));
+                dst.put_slice(&network_endian(request.begin));
+                dst.put_slice(&network_endian(request.length));
             }
         }
 
@@ -146,7 +146,15 @@ impl Encoder for MessageCodec {
     }
 }
 
+/// write out the length of the message, reserve as many bytes as needed
 fn length_and_id(dst: &mut BytesMut, length: u32, id: u8) {
-    NetworkEndian::write_u32(dst, length);
-    dst[4] = id;
+    dst.reserve(4 + 1 + length as usize);
+    dst.put_slice(&network_endian(length));
+    dst.put_u8(id);
+}
+
+fn network_endian(n: u32) -> [u8; 4] {
+    let mut buf = [0; 4];
+    NetworkEndian::write_u32(&mut buf, n);
+    buf
 }

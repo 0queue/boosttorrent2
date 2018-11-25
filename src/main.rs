@@ -133,9 +133,6 @@ fn main() {
     println!("choking");
     peer.choke();
 
-    // for some reason required between sending two messages??
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
     println!("am interested");
     peer.interested(true);
 
