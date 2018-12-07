@@ -8,9 +8,9 @@ use tokio::codec::Framed;
 use tokio::net::TcpStream;
 use tokio::prelude::{Future, Sink, Stream};
 
-use boostencode::{FromValue, Value};
-use peer::channel_sink::ChannelSink;
-use peer::protocol::Message;
+use crate::boostencode::{FromValue, Value};
+use crate::peer::channel_sink::ChannelSink;
+use crate::peer::protocol::Message;
 
 mod handshake;
 pub mod protocol;

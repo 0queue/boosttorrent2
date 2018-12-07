@@ -1,5 +1,5 @@
 //! metainfo contains functions and types to parse the .torrent file
-use boostencode::{FromValue, Value};
+use crate::boostencode::{FromValue, Value};
 use crypto::digest::Digest;
 use crypto::sha1::Sha1;
 

@@ -33,7 +33,7 @@ use log::{
 use rand::prelude::*;
 use simple_logger::init_with_level;
 
-use boostencode::{FromValue, Value};
+use crate::boostencode::{FromValue, Value};
 
 mod boostencode;
 mod metainfo;

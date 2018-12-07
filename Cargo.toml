@@ -2,6 +2,7 @@
 name = "boosttorrent2"
 version = "0.1.0"
 authors = ["Thomas Harris <teh019283@gmail.com>", "Jake Sandler <jsandler18@gmail.com>"]
+edition = "2018"
 
 [features]
 default = []

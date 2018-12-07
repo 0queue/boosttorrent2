@@ -4,8 +4,8 @@ use std::time::Duration;
 use futures::Future;
 use futures::Stream;
 use reqwest::{
-    async::Client,
-    async::Decoder,
+    r#async::Client,
+    r#async::Decoder,
     Url,
 };
 use serde::ser::SerializeMap;
@@ -13,9 +13,9 @@ use serde::Serialize;
 use serde::Serializer;
 use tokio::prelude::*;
 
-use boostencode::FromValue;
-use boostencode::Value;
-use peer::PeerInfo;
+use crate::boostencode::FromValue;
+use crate::boostencode::Value;
+use crate::peer::PeerInfo;
 
 pub enum Event {
     Started,
