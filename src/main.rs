@@ -1,20 +1,3 @@
-extern crate bit_vec;
-extern crate byteorder;
-extern crate bytes;
-#[warn(unused_extern_crates)]
-extern crate clap;
-extern crate crossbeam_channel;
-extern crate crypto;
-extern crate derive_error;
-extern crate futures;
-extern crate log;
-extern crate maplit;
-extern crate rand;
-extern crate reqwest;
-extern crate serde;
-extern crate simple_logger;
-extern crate tokio;
-
 use std::{
     fs::File,
     io::Read,
