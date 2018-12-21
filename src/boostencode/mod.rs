@@ -1,4 +1,4 @@
-use boostencode::parse::parse_val;
+use crate::boostencode::parse::parse_val;
 use derive_error::Error;
 use std::cmp;
 use std::cmp::Ordering;

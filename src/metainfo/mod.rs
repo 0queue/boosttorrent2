@@ -1,5 +1,5 @@
 //! metainfo contains functions and types to parse the .torrent file
-use boostencode::{FromValue, Value};
+use crate::boostencode::{FromValue, Value};
 use crypto::digest::Digest;
 use crypto::sha1::Sha1;
 use std::collections::HashMap;
@@ -89,7 +89,7 @@ impl FromValue for SingleFile {
 impl FromValue for MultiFile {
     type Error = String;
 
-    fn from_value(val: &Value) -> Result<Self, Self::Error> where Self: Sized {
+    fn from_value(_val: &Value) -> Result<Self, Self::Error> where Self: Sized {
         unimplemented!()
     }
 }

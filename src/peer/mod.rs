@@ -1,4 +1,4 @@
-use piece::Piece;
+use crate::piece::Piece;
 use futures::sync::mpsc::{
     Receiver,
     Sender,

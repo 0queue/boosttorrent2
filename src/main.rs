@@ -1,20 +1,4 @@
-extern crate bit_vec;
-extern crate byteorder;
-extern crate bytes;
-extern crate clap;
-extern crate crypto;
-extern crate derive_error;
-extern crate futures;
-extern crate hyper;
-extern crate log;
-extern crate maplit;
-extern crate percent_encoding;
-extern crate rand;
-extern crate replace_with;
-extern crate simple_logger;
-extern crate tokio;
-
-use boostencode::{FromValue, Value};
+use crate::boostencode::{FromValue, Value};
 use clap::App;
 use clap::load_yaml;
 use log::{

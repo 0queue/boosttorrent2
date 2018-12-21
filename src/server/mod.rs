@@ -5,9 +5,9 @@ use log::{
     trace,
     warn,
 };
-use metainfo::MetaInfo;
-use peer::Peer;
-use piece::Piece;
+use crate::metainfo::MetaInfo;
+use crate::peer::Peer;
+use crate::piece::Piece;
 use replace_with::replace_with;
 use std::default::Default;
 use std::net::SocketAddr;
@@ -28,7 +28,7 @@ use tokio::{
     },
     spawn,
 };
-use tracker::{
+use crate::tracker::{
     Tracker,
     TrackerResponse,
 };
@@ -156,7 +156,7 @@ impl Future for Server {
         // Get finished pieces and request new pieces
         loop {
             match self.piece_stream.poll() {
-                Ok(Async::Ready(Some((finished_piece, new_piece_sender, availible_pieces)))) => {
+                Ok(Async::Ready(Some((_finished_piece, _new_piece_sender, _availible_pieces)))) => {
                     // TODO verify and write off the finished piece and either kill the peer or give
                     // them a new piece
                 }

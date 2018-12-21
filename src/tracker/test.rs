@@ -1,4 +1,4 @@
-use boostencode::Value;
+use crate::boostencode::Value;
 use hyper::{
     Body,
     Request,
@@ -15,7 +15,7 @@ use super::*;
 use tokio;
 
 
-fn service_handler(request_: Request<Body>) -> Response<Body> {
+fn service_handler(_request_: Request<Body>) -> Response<Body> {
     let res = String::from_utf8(Value::Dict(hashmap! {
                     Vec::from("interval") => Value::Integer(10),
                     Vec::from("tracker id") => Value::BString(Vec::from("i am the tracker")),

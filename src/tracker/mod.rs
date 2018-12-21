@@ -1,4 +1,4 @@
-use boostencode::{DecodeError, FromValue, Value};
+use crate::boostencode::{DecodeError, FromValue, Value};
 use hyper;
 use hyper::{
     Client,

@@ -1,5 +1,5 @@
 //! Helper functions for parsing bencode values out of byte strings
-use boostencode::compare_bytes_slice;
+use crate::boostencode::compare_bytes_slice;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::str::FromStr;
