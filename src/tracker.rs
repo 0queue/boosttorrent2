@@ -1,4 +1,11 @@
 use crate::boostencode::{DecodeError, FromValue, Value};
+use actix::{
+    Message,
+    Actor,
+    Context,
+    Handler,
+    ResponseFuture,
+};
 use hyper;
 use hyper::{
     Client,
@@ -11,26 +18,24 @@ use percent_encoding::{
     percent_encode,
     QUERY_ENCODE_SET,
 };
-use std::fmt;
+//use std::fmt;
 use std::net::{
     IpAddr,
     SocketAddr,
 };
 use tokio::prelude::{
-    Async,
     Future,
     future::{
-        empty,
         err,
         ok,
     },
     Stream,
 };
-
-#[cfg(test)]
-mod test;
-
-
+//
+//#[cfg(test)]
+//mod test;
+//
+//
 pub struct Tracker {
     // The 20 byte unique identifier for this instance of the client
     peer_id: [u8; 20],
@@ -42,9 +47,6 @@ pub struct Tracker {
     port: u16,
     // A string the client should send on subsequent announcements
     tracker_id: Option<String>,
-    // The shared state of the client
-    // A future of the must recent tracker request
-    request: Box<dyn Future<Item=TrackerResponse, Error=TrackerError> + Send>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -92,22 +94,6 @@ pub enum TrackerError {
     DecodeError(DecodeError),
     /// The contents of the response are not correct
     InvalidResponse,
-}
-
-enum Event {
-    Started,
-    Stopped,
-    Completed,
-}
-
-impl fmt::Display for Event {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match self {
-            Event::Started => "started",
-            Event::Stopped => "stopped",
-            Event::Completed => "completed"
-        })
-    }
 }
 
 impl FromValue for PeerInfo {
@@ -219,32 +205,41 @@ impl Tracker {
             info_hash,
             port,
             tracker_id: None,
-            request: Box::new(err(TrackerError::InvalidResponse)),
         }
     }
+}
 
-    /// Tell the tracker that you are starting your download
-    pub fn start(&mut self, download_size: u64) {
-        self.request = Box::new(self.announce(Some(Event::Started), download_size, 0, 0))
-    }
+impl Actor for Tracker {
+    type Context = actix::Context<Self>;
+}
 
-    /// Tell the tracker that you are stopping your download without finishing.
-    pub fn cancel(&mut self, left: u64, uploaded: u64, downloaded: u64) {
-        self.request = Box::new(self.announce(Some(Event::Stopped), left, uploaded, downloaded))
-    }
+pub struct Update {
+    uploaded: u32,
+    downloaded: u32,
+    left: u32,
+}
 
-    /// Tell the tracker that you have completed the download
-    pub fn finish(&mut self, left: u64, uploaded: u64, downloaded: u64) {
-        self.request = Box::new(self.announce(Some(Event::Completed), left, uploaded, downloaded))
-    }
+pub enum Event {
+    Start,
+    Refresh(Update),
+    Stop(Update),
+    Complete(Update),
+}
 
-    /// Update the tracker on your download status, and get more peers
-    pub fn refresh(&mut self, left: u64, uploaded: u64, downloaded: u64) {
-        self.request = Box::new(self.announce(None, left, uploaded, downloaded))
-    }
+impl Message for Event {
+    type Result = Result<TrackerResponse,TrackerError>;
+}
 
-    fn announce(&self, event: Option<Event>, left: u64, uploaded: u64, downloaded: u64) -> impl Future<Item=TrackerResponse, Error=TrackerError> {
-        // build the tracker query string
+impl Handler<Event> for Tracker {
+    type Result = ResponseFuture<TrackerResponse, TrackerError>;
+
+    fn handle(&mut self, msg: Event, _ctx: &mut Self::Context) -> Self::Result {
+        let (event, update) = match msg {
+            Event::Start => ("started", Update{uploaded: 0, downloaded: 0, left: 0}),
+            Event::Refresh(update) => ("", update),
+            Event::Stop(update) => ("stopped", update),
+            Event::Complete(update) => ("completed", update)
+        };
         let mut req_uri = self.tracker_uri.clone();
         let encoded_info_hash = percent_encode(&self.info_hash, QUERY_ENCODE_SET).to_string();
         let encoded_peer_id = percent_encode(&self.peer_id, QUERY_ENCODE_SET).to_string();
@@ -252,9 +247,9 @@ impl Tracker {
             "info_hash" => encoded_info_hash,
             "peer_id" => encoded_peer_id,
             "port" => self.port.to_string(),
-            "uploaded" => uploaded.to_string(),
-            "downloaded" => downloaded.to_string(),
-            "left" => left.to_string(),
+            "uploaded" => update.uploaded.to_string(),
+            "downloaded" => update.downloaded.to_string(),
+            "left" => update.left.to_string(),
             "compact" => 0.to_string(),
         };
         req_uri.push('?');
@@ -265,14 +260,11 @@ impl Tracker {
             s.push('&');
             s
         });
-        match event {
-            Some(e) => {
-                req_uri.push_str("event");
-                req_uri.push('=');
-                req_uri.push_str(&e.to_string());
-                req_uri.push('&')
-            }
-            None => ()
+        if event != "" {
+            req_uri.push_str("event");
+            req_uri.push('=');
+            req_uri.push_str(event);
+            req_uri.push('&')
         }
         match &self.tracker_id {
             Some(id) => {
@@ -290,7 +282,7 @@ impl Tracker {
             Err(e) => err(TrackerError::InvalidURI(e))
         };
         // Start the tracker query future
-        uri.and_then(move |uri| {
+        let request = uri.and_then(move |uri| {
             client.get(uri).map_err(|e| TrackerError::ConnectionError(e))
         }).and_then(|get_response| {
             if get_response.status() == StatusCode::OK {
@@ -309,37 +301,23 @@ impl Tracker {
             trace!("response: {:?}", val);
             TrackerResponse::from_value(&val)
                 .map_err(|_| TrackerError::InvalidResponse)
-        })
-    }
+        });
 
-    /// Updates the tracker id based on a tracker response
-    fn update_tracker_id(&mut self, response: &TrackerResponse) {
-        match response {
-            TrackerResponse::Success(r) | TrackerResponse::Warning(_, r) => {
-                match &r.tracker_id {
-                    Some(id) => self.tracker_id = Some(id.clone()),
-                    None => ()
-                }
-            }
-            _ => ()
-        }
+        Box::new(request)
     }
 }
 
-impl Future for Tracker {
-    type Item = TrackerResponse;
-    type Error = TrackerError;
+pub struct TrackerIdUpdate(String);
 
-    fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
-        let poll = self.request.poll();
-        // if ready, update the tracker id to the response value, and set it up so that subsequent
-        // polls will return not ready
-        if let Ok(Async::Ready(res)) = poll {
-            self.update_tracker_id(&res);
-            self.request = Box::new(empty());
-            Ok(Async::Ready(res))
-        } else {
-            poll
-        }
+impl Message for TrackerIdUpdate {
+    type Result = ();
+}
+
+impl Handler<TrackerIdUpdate> for Tracker {
+    type Result = ();
+
+    fn handle(&mut self, msg: TrackerIdUpdate, _ctx: &mut Self::Context) -> Self::Result {
+        self.tracker_id.replace(msg.0);
+        ()
     }
 }

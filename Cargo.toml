@@ -19,6 +19,7 @@ futures = "0.1.25"
 replace_with = "0.1.1"
 byteorder = "1.2.7"
 bytes = "0.4.11"
+actix = "0.7.9"
 
 [dependencies.clap]
 version = "~2.32.0"

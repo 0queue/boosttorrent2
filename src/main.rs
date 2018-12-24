@@ -11,13 +11,16 @@ use rand::prelude::*;
 use simple_logger::init_with_level;
 use std::fs::File;
 use std::io::Read;
+use actix::Actor;
 
 mod boostencode;
 mod metainfo;
 mod tracker;
-mod server;
 mod piece;
+mod spawner;
+mod coordinator;
 mod peer;
+mod codec;
 
 fn main() {
     let yaml = load_yaml!("cli.yml");
@@ -47,9 +50,12 @@ fn main() {
         debug!("{:?}", metainfo);
 
         let peer_id = gen_peer_id();
-
-        let server = server::Server::new(peer_id, metainfo);
-        tokio::run(server);
+        let port = 6888;
+        actix::System::run(move || {
+            let tracker = tracker::Tracker::new(peer_id, metainfo.announce, metainfo.info_hash, port).start();
+            let coordinator = coordinator::Coordinator::new().start();
+            let spawner = spawner::Spawner::listen(coordinator, port);
+        });
     } else {
         error!("No torrent file provided");
     }

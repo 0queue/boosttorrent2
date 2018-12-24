@@ -3,6 +3,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 use derive_error::Error;
 use std::io;
 use tokio::codec::{Decoder, Encoder};
+use actix::Message;
 
 pub struct Request {
     index: u32,
@@ -42,7 +43,8 @@ impl From<([u8; 20], [u8; 20])> for Handshake {
     }
 }
 
-pub enum Message {
+#[derive(Message)]
+pub enum BitTorrentMessage {
     Handshake(Handshake),
     Choke,
     Unchoke,
@@ -65,7 +67,7 @@ impl MessageCodec {
 }
 
 impl Decoder for MessageCodec {
-    type Item = Message;
+    type Item = BitTorrentMessage;
     type Error = io::Error;
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
 
@@ -91,7 +93,7 @@ impl Decoder for MessageCodec {
             let mut peer_id: [u8; 20] = [0; 20];
             buf.copy_to_slice(&mut peer_id);
 
-            Ok(Some(Message::Handshake((info_hash, peer_id).into())))
+            Ok(Some(BitTorrentMessage::Handshake((info_hash, peer_id).into())))
         } else {
             let length = NetworkEndian::read_u32(&src.split_to(4)) as usize;
             if src.len() < length {
@@ -101,33 +103,33 @@ impl Decoder for MessageCodec {
             let type_id = buf.get_u8();
 
             let message = match type_id {
-                0 => Some(Message::Choke),
-                1 => Some(Message::Unchoke),
-                2 => Some(Message::Interested),
-                3 => Some(Message::NotInterested),
-                4 => Some(Message::Have(buf.get_u32_be())),
+                0 => Some(BitTorrentMessage::Choke),
+                1 => Some(BitTorrentMessage::Unchoke),
+                2 => Some(BitTorrentMessage::Interested),
+                3 => Some(BitTorrentMessage::NotInterested),
+                4 => Some(BitTorrentMessage::Have(buf.get_u32_be())),
                 5 => {
                     let mut bytes = Vec::with_capacity(length - 1);
                     buf.copy_to_slice(&mut bytes);
-                    Some(Message::Bitfield(bit_vec::BitVec::from_bytes(&bytes)))
+                    Some(BitTorrentMessage::Bitfield(bit_vec::BitVec::from_bytes(&bytes)))
                 }
                 6 => {
                     let index = buf.get_u32_be();
                     let begin = buf.get_u32_be();
                     let length = buf.get_u32_be();
-                    Some(Message::Request((index, begin, length).into()))
+                    Some(BitTorrentMessage::Request((index, begin, length).into()))
                 }
                 7 => {
                     let index = buf.get_u32_be();
                     let begin = buf.get_u32_be();
                     let block = buf.collect();
-                    Some(Message::Piece(Piece::new(index, begin, block)))
+                    Some(BitTorrentMessage::Piece(Piece::new(index, begin, block)))
                 }
                 8 => {
                     let index = buf.get_u32_be();
                     let begin = buf.get_u32_be();
                     let length = buf.get_u32_be();
-                    Some(Message::Cancel((index, begin, length).into()))
+                    Some(BitTorrentMessage::Cancel((index, begin, length).into()))
                 }
                 _ => None,
             };
@@ -139,12 +141,12 @@ impl Decoder for MessageCodec {
 }
 
 impl Encoder for MessageCodec {
-    type Item = Message;
+    type Item = BitTorrentMessage;
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match item {
-            Message::Handshake(item) => {
+            BitTorrentMessage::Handshake(item) => {
                 dst.reserve(1 + 19 + 8 + 20 + 20);
 
                 dst.put(19u8);
@@ -153,31 +155,31 @@ impl Encoder for MessageCodec {
                 dst.put(item.info_hash.as_ref());
                 dst.put(item.peer_id.as_ref());
             },
-            Message::Choke => length_and_id(dst, 1, 0),
-            Message::Unchoke => length_and_id(dst, 1, 1),
-            Message::Interested => length_and_id(dst, 1, 2),
-            Message::NotInterested => length_and_id(dst, 1, 3),
-            Message::Have(piece_index) => {
+            BitTorrentMessage::Choke => length_and_id(dst, 1, 0),
+            BitTorrentMessage::Unchoke => length_and_id(dst, 1, 1),
+            BitTorrentMessage::Interested => length_and_id(dst, 1, 2),
+            BitTorrentMessage::NotInterested => length_and_id(dst, 1, 3),
+            BitTorrentMessage::Have(piece_index) => {
                 length_and_id(dst, 5, 4);
                 dst.put_u32_be(piece_index);
             }
-            Message::Bitfield(bit_vec) => {
+            BitTorrentMessage::Bitfield(bit_vec) => {
                 length_and_id(dst, 1 + bit_vec.len() as u32, 5);
                 dst.put(&bit_vec.to_bytes());
             }
-            Message::Request(request) => {
+            BitTorrentMessage::Request(request) => {
                 length_and_id(dst, 13, 6);
                 dst.put_u32_be(request.index);
                 dst.put_u32_be(request.begin);
                 dst.put_u32_be(request.length);
             }
-            Message::Piece(piece) => {
+            BitTorrentMessage::Piece(piece) => {
                 length_and_id(dst, 9 + piece.block.len() as u32, 7);
                 dst.put_u32_be(piece.index);
                 dst.put_u32_be(piece.begin);
                 dst.put(&piece.block);
             }
-            Message::Cancel(request) => {
+            BitTorrentMessage::Cancel(request) => {
                 length_and_id(dst, 13, 8);
                 dst.put_u32_be(request.index);
                 dst.put_u32_be(request.begin);
