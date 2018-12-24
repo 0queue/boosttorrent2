@@ -4,7 +4,12 @@ use actix::{
     Actor,
     Context,
     Handler,
-    ResponseFuture,
+    ResponseActFuture,
+    fut::{
+        ActorFuture,
+        WrapFuture,
+        wrap_future,
+    },
 };
 use hyper;
 use hyper::{
@@ -31,11 +36,11 @@ use tokio::prelude::{
     },
     Stream,
 };
-//
-//#[cfg(test)]
-//mod test;
-//
-//
+use std::time::{
+    Instant,
+    Duration,
+};
+
 pub struct Tracker {
     // The 20 byte unique identifier for this instance of the client
     peer_id: [u8; 20],
@@ -47,9 +52,13 @@ pub struct Tracker {
     port: u16,
     // A string the client should send on subsequent announcements
     tracker_id: Option<String>,
+    // A cache of the last response
+    response_cache: Option<TrackerSuccessResponse>,
+    // The time after which we can make another refresh request
+    cache_until: Instant,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct PeerInfo {
     // the unique identifier for this peer
     pub peer_id: Option<[u8; 20]>,
@@ -57,7 +66,7 @@ pub struct PeerInfo {
     pub address: SocketAddr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TrackerSuccessResponse {
     // The number of seconds the client should wait before sending a regular request to the tracker
     pub interval: u32,
@@ -73,7 +82,7 @@ pub struct TrackerSuccessResponse {
     pub peers: Vec<PeerInfo>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TrackerResponse {
     Failure(String),
     Warning(String, TrackerSuccessResponse),
@@ -205,6 +214,8 @@ impl Tracker {
             info_hash,
             port,
             tracker_id: None,
+            response_cache: None,
+            cache_until: Instant::now(),
         }
     }
 }
@@ -227,15 +238,22 @@ pub enum Event {
 }
 
 impl Message for Event {
-    type Result = Result<TrackerResponse,TrackerError>;
+    type Result = Result<TrackerResponse, TrackerError>;
 }
 
 impl Handler<Event> for Tracker {
-    type Result = ResponseFuture<TrackerResponse, TrackerError>;
+    type Result = ResponseActFuture<Self, TrackerResponse, TrackerError>;
 
     fn handle(&mut self, msg: Event, _ctx: &mut Self::Context) -> Self::Result {
+        // Only use the cached value if this is a refresh request and it is before the cache timeout
+        if let (Some(resp),Event::Refresh(_)) = (&self.response_cache, &msg) {
+            if Instant::now() < self.cache_until {
+                return Box::new(actix::fut::ok(TrackerResponse::Success(resp.clone())));
+            }
+        }
+        // Don't use the cached value, actually reach out to the tracker
         let (event, update) = match msg {
-            Event::Start => ("started", Update{uploaded: 0, downloaded: 0, left: 0}),
+            Event::Start => ("started", Update { uploaded: 0, downloaded: 0, left: 0 }),
             Event::Refresh(update) => ("", update),
             Event::Stop(update) => ("stopped", update),
             Event::Complete(update) => ("completed", update)
@@ -302,22 +320,18 @@ impl Handler<Event> for Tracker {
             TrackerResponse::from_value(&val)
                 .map_err(|_| TrackerError::InvalidResponse)
         });
-
-        Box::new(request)
-    }
-}
-
-pub struct TrackerIdUpdate(String);
-
-impl Message for TrackerIdUpdate {
-    type Result = ();
-}
-
-impl Handler<TrackerIdUpdate> for Tracker {
-    type Result = ();
-
-    fn handle(&mut self, msg: TrackerIdUpdate, _ctx: &mut Self::Context) -> Self::Result {
-        self.tracker_id.replace(msg.0);
-        ()
+        // this wrapper future allows the actor to update its state based on the result of the completed future
+        let update_self = wrap_future::<_, Self>(request).map(|result, mut actor, _ctx| {
+            match &result {
+                TrackerResponse::Warning(_, resp) | TrackerResponse::Success(resp) => {
+                    actor.tracker_id = resp.tracker_id.clone();
+                    actor.response_cache = Some(resp.clone());
+                    actor.cache_until = Instant::now() + Duration::new(resp.interval as u64, 0);
+                }
+                _ => ()
+            };
+            result
+        });
+        Box::new(update_self)
     }
 }
