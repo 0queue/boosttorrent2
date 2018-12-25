@@ -52,9 +52,12 @@ fn main() {
         let peer_id = gen_peer_id();
         let port = 6888;
         actix::System::run(move || {
-            let tracker = tracker::Tracker::new(peer_id, metainfo.announce, metainfo.info_hash, port).start();
             let coordinator = coordinator::Coordinator::new().start();
-            let spawner = spawner::Spawner::listen(coordinator, port);
+            let tracker = tracker::Tracker::new(coordinator.clone(), peer_id, metainfo.announce, metainfo.info_hash, port).start();
+            // tell the tracker to make a request.  That request will be cached for subsequent refreshes,
+            // so we don't need to store the result now
+            tracker.do_send(tracker::Event::Start);
+            let spawner = spawner::Spawner::listen(coordinator, tracker, port);
         });
     } else {
         error!("No torrent file provided");

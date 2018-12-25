@@ -3,7 +3,9 @@ use actix::{
     Addr,
     Context,
     Handler,
-    Message
+    Message,
+    MessageResult,
+    dev::MessageResponse
 };
 use crate::peer::Peer;
 
@@ -26,6 +28,7 @@ impl Actor for Coordinator {
 }
 
 #[derive(Message)]
+/// Message for adding a peer actor to the coordinator
 pub struct AddPeer(pub Addr<Peer>);
 
 impl Handler<AddPeer> for Coordinator {
@@ -33,5 +36,30 @@ impl Handler<AddPeer> for Coordinator {
 
     fn handle(&mut self, msg: AddPeer, _ctx: &mut Context<Self>) {
         self.peers.push(msg.0);
+    }
+}
+
+/// Message for requesting upload/donwload/left stats
+pub struct GetStats;
+
+pub struct Stats {
+    pub uploaded: u32,
+    pub downloaded: u32,
+    pub left: u32,
+}
+
+impl Message for GetStats {
+    type Result = Stats;
+}
+
+impl Handler<GetStats> for Coordinator {
+    type Result = MessageResult<GetStats>;
+
+    fn handle(&mut self, _msg: GetStats, _ctx: &mut Context<Self>) -> Self::Result {
+        MessageResult(Stats {
+            uploaded: 0,
+            downloaded: 0,
+            left: 0,
+        })
     }
 }

@@ -1,5 +1,6 @@
 use crate::boostencode::{DecodeError, FromValue, Value};
 use actix::{
+    Addr,
     Message,
     Actor,
     Context,
@@ -40,8 +41,14 @@ use std::time::{
     Instant,
     Duration,
 };
+use crate::coordinator::{
+    Coordinator,
+    GetStats,
+    Stats,
+};
 
 pub struct Tracker {
+    coordinator: Addr<Coordinator>,
     // The 20 byte unique identifier for this instance of the client
     peer_id: [u8; 20],
     // The uri of the tracker
@@ -92,6 +99,8 @@ pub enum TrackerResponse {
 
 #[derive(Debug, derive_error::Error)]
 pub enum TrackerError {
+    /// We could not get upload/download statistics to send to the tracker
+    CouldNotGetStats,
     /// The uri we wanted to request was somehow invalid
     InvalidURI(InvalidUri),
     /// Could not connect to the tracker
@@ -204,11 +213,13 @@ impl FromValue for TrackerResponse {
 impl Tracker {
     /// Create a new Tracker
     pub fn new(
+        coordinator: Addr<Coordinator>,
         peer_id: [u8; 20],
         tracker_uri: String,
         info_hash: [u8; 20],
         port: u16) -> Self {
         Tracker {
+            coordinator,
             peer_id,
             tracker_uri,
             info_hash,
@@ -224,17 +235,11 @@ impl Actor for Tracker {
     type Context = actix::Context<Self>;
 }
 
-pub struct Update {
-    uploaded: u32,
-    downloaded: u32,
-    left: u32,
-}
-
 pub enum Event {
     Start,
-    Refresh(Update),
-    Stop(Update),
-    Complete(Update),
+    Refresh,
+    Stop,
+    Complete,
 }
 
 impl Message for Event {
@@ -246,17 +251,17 @@ impl Handler<Event> for Tracker {
 
     fn handle(&mut self, msg: Event, _ctx: &mut Self::Context) -> Self::Result {
         // Only use the cached value if this is a refresh request and it is before the cache timeout
-        if let (Some(resp),Event::Refresh(_)) = (&self.response_cache, &msg) {
+        if let (Some(resp), Event::Refresh) = (&self.response_cache, &msg) {
             if Instant::now() < self.cache_until {
                 return Box::new(actix::fut::ok(TrackerResponse::Success(resp.clone())));
             }
         }
         // Don't use the cached value, actually reach out to the tracker
-        let (event, update) = match msg {
-            Event::Start => ("started", Update { uploaded: 0, downloaded: 0, left: 0 }),
-            Event::Refresh(update) => ("", update),
-            Event::Stop(update) => ("stopped", update),
-            Event::Complete(update) => ("completed", update)
+        let event = match msg {
+            Event::Start => "started",
+            Event::Refresh => "",
+            Event::Stop => "stopped",
+            Event::Complete => "completed",
         };
         let mut req_uri = self.tracker_uri.clone();
         let encoded_info_hash = percent_encode(&self.info_hash, QUERY_ENCODE_SET).to_string();
@@ -265,9 +270,6 @@ impl Handler<Event> for Tracker {
             "info_hash" => encoded_info_hash,
             "peer_id" => encoded_peer_id,
             "port" => self.port.to_string(),
-            "uploaded" => update.uploaded.to_string(),
-            "downloaded" => update.downloaded.to_string(),
-            "left" => update.left.to_string(),
             "compact" => 0.to_string(),
         };
         req_uri.push('?');
@@ -293,13 +295,29 @@ impl Handler<Event> for Tracker {
             }
             None => ()
         }
-        let _ = req_uri.pop();
-        let client = Client::new();
-        let uri = match hyper::http::HttpTryFrom::try_from(&req_uri) {
-            Ok(uri) => ok(uri),
-            Err(e) => err(TrackerError::InvalidURI(e))
-        };
+        let uri = self.coordinator.send(GetStats)
+            .map_err(|_| TrackerError::CouldNotGetStats)
+            .and_then(move |stats| {
+                let query = hashmap! {
+                    "uploaded" => stats.uploaded.to_string(),
+                    "downloaded" => stats.downloaded.to_string(),
+                    "left" => stats.left.to_string()
+                };
+                query.iter().fold(&mut req_uri, |s, (k, v)| {
+                    s.push_str(k);
+                    s.push('=');
+                    s.push_str(&v);
+                    s.push('&');
+                    s
+                });
+                let _ = req_uri.pop();
+                match hyper::http::HttpTryFrom::try_from(&req_uri) {
+                    Ok(uri) => ok(uri),
+                    Err(e) => err(TrackerError::InvalidURI(e))
+                }
+            });
         // Start the tracker query future
+        let client = Client::new();
         let request = uri.and_then(move |uri| {
             client.get(uri).map_err(|e| TrackerError::ConnectionError(e))
         }).and_then(|get_response| {
