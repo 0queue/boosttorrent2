@@ -134,19 +134,19 @@ impl Display for Value {
                 write!(f, "[")?;
                 vals.iter().enumerate().for_each(|(i, val)| {
                     if i > 0 {
-                        write!(f, ", ");
+                        let _ = write!(f, ", ");
                     }
 
-                    write!(f, "{}", val);
+                    let _ = write!(f, "{}", val);
                 });
                 write!(f, "]")
             }
             Value::Dict(map) => {
                 let mut entries: Vec<_> = map.iter().collect();
                 entries.sort_by(|(k1, _), (k2, _)| compare_bytes_slice(*k1, *k2));
-                writeln!(f, "{{");
+                writeln!(f, "{{")?;
                 entries.iter().for_each(|(k, v)| {
-                    writeln!(f, "  {} => {}", str::from_utf8(k).unwrap_or("[...bytes...]"), v);
+                    let _ = writeln!(f, "  {} => {}", str::from_utf8(k).unwrap_or("[...bytes...]"), v);
                 });
                 write!(f, "}}")
             }

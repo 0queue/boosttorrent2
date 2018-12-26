@@ -1,6 +1,5 @@
 use byteorder::{ByteOrder, NetworkEndian};
 use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
-use derive_error::Error;
 use std::io;
 use tokio::codec::{Decoder, Encoder};
 use actix::Message;

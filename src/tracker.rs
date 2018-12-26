@@ -3,12 +3,10 @@ use actix::{
     Addr,
     Message,
     Actor,
-    Context,
     Handler,
     ResponseActFuture,
     fut::{
         ActorFuture,
-        WrapFuture,
         wrap_future,
     },
 };
@@ -44,7 +42,6 @@ use std::time::{
 use crate::coordinator::{
     Coordinator,
     GetStats,
-    Stats,
 };
 
 pub struct Tracker {

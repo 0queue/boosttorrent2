@@ -4,8 +4,6 @@ use actix::{
     Context,
     Handler,
     Message,
-    io::FramedWrite,
-    AsyncContext,
     ResponseActFuture,
     WrapFuture,
     ActorFuture,
@@ -18,29 +16,17 @@ use actix::{
 use tokio::{
     prelude::{
         Future,
-        Stream,
     },
     net::tcp::{
         TcpStream,
-        TcpListener,
     },
-    codec::FramedRead,
-    io::AsyncRead,
-};
-use std::net::SocketAddr;
-use std::str::FromStr;
-use crate::coordinator::{
-    Coordinator,
-    AddPeer,
 };
 use crate::peer::Peer;
-use crate::codec::MessageCodec;
 use crate::tracker::{
     Event,
     PeerInfo,
     Tracker,
     TrackerResponse,
-    TrackerSuccessResponse,
 };
 
 
@@ -82,7 +68,7 @@ impl Handler<NewPeer> for Spawner {
                 .map_err(|_| ())
                 // into_actor so we can mutate our state when the tracker returns and cache the returned peers
                 .into_actor(self)
-                .and_then(|resp, actor, ctx| {
+                .and_then(|resp, actor, _ctx| {
                     match resp {
                         Ok(TrackerResponse::Warning(_, mut resp)) | Ok(TrackerResponse::Success(mut resp)) => {
                             actor.potential_peers.append(&mut resp.peers);

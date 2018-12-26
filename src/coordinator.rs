@@ -5,7 +5,6 @@ use actix::{
     Handler,
     Message,
     MessageResult,
-    dev::MessageResponse
 };
 use crate::peer::Peer;
 

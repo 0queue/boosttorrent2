@@ -2,7 +2,6 @@
 use crate::boostencode::{FromValue, Value};
 use crypto::digest::Digest;
 use crypto::sha1::Sha1;
-use std::collections::HashMap;
 
 #[cfg(test)]
 mod test;

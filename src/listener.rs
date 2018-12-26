@@ -4,27 +4,16 @@ use actix::{
     Context,
     Handler,
     Message,
-    io::FramedWrite,
     AsyncContext,
-    ResponseActFuture,
-    WrapFuture,
-    ActorFuture,
-    fut::{
-        ok,
-        err,
-        wrap_future,
-    },
 };
 use tokio::{
     prelude::{
-        Future,
         Stream,
     },
     net::tcp::{
         TcpStream,
         TcpListener,
     },
-    codec::FramedRead,
 };
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -33,14 +22,7 @@ use crate::coordinator::{
     AddPeer,
 };
 use crate::peer::Peer;
-use crate::codec::MessageCodec;
-use crate::tracker::{
-    Event,
-    PeerInfo,
-    Tracker,
-    TrackerResponse,
-    TrackerSuccessResponse,
-};
+
 
 /// Actor that will spawn connections to peers
 pub struct Listener {

@@ -59,8 +59,8 @@ fn main() {
             // so we don't need to store the result now
             tracker.do_send(tracker::Event::Start);
 
-            let listener = spawner::Spawner::new(tracker).start();
-            let spawner = listener::Listener::listen(coordinator, port);
+            let _listener = spawner::Spawner::new(tracker).start();
+            let _spawner = listener::Listener::listen(coordinator, port);
         });
     } else {
         error!("No torrent file provided");
