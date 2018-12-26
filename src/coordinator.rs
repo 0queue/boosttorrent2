@@ -12,7 +12,7 @@ use crate::peer::Peer;
 /// Actor that coordinates peer actions, such as assigning and cancelling pieces, sending Have messages
 /// and starting the endgame
 pub struct Coordinator {
-    peers: Vec<Addr<Peer>>
+    peers: Vec<Addr<Peer>>,
 }
 
 impl Coordinator {

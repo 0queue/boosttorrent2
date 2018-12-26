@@ -43,56 +43,22 @@ use crate::tracker::{
     TrackerSuccessResponse,
 };
 
-/// Actor that will spawn connections to peers
+
 pub struct Spawner {
-    coordinator: Addr<Coordinator>,
     tracker: Addr<Tracker>,
     potential_peers: Vec<PeerInfo>,
-}
-
-impl Spawner {
-    pub fn listen(coordinator: Addr<Coordinator>, tracker: Addr<Tracker>, port: u16) -> Addr<Self> {
-        Self::create(move |ctx| {
-            let addr = SocketAddr::from_str(&format!("0.0.0.0:{}", port)).unwrap();
-            let listener = TcpListener::bind(&addr).unwrap();
-            ctx.add_message_stream(listener.incoming().map_err(|_| ()).map(|st| PeerConnecting(st)));
-            Spawner {
-                coordinator,
-                tracker,
-                potential_peers: Vec::new(),
-            }
-        })
-    }
-
-    fn spawn_peer(stream: TcpStream) -> Addr<Peer> {
-        let (reader, writer) = stream.split();
-        Peer::create(|ctx| {
-            ctx.add_message_stream(FramedRead::new(reader, MessageCodec::new()).map_err(|_| ()));
-            Peer::new(FramedWrite::new(writer, MessageCodec::new(), ctx))
-        })
-    }
 }
 
 impl Actor for Spawner {
     type Context = actix::Context<Self>;
 }
 
-/// This message means a peer is trying to connect to us.  Create a peer actor and send it to the
-/// coordinator.
-struct PeerConnecting(TcpStream);
-
-impl Message for PeerConnecting {
-    type Result = ();
-}
-
-impl Handler<PeerConnecting> for Spawner {
-    type Result = ();
-
-    fn handle(&mut self, msg: PeerConnecting, _ctx: &mut Context<Self>) {
-        // When a peer tries to connect to us, create a new peer actor, and send that actor's address
-        // to the Coordinator
-        let peer = Self::spawn_peer(msg.0);
-        self.coordinator.do_send(AddPeer(peer));
+impl Spawner {
+    pub fn new(tracker: Addr<Tracker>) -> Self {
+        Spawner {
+            tracker,
+            potential_peers: Vec::new(),
+        }
     }
 }
 
@@ -130,14 +96,14 @@ impl Handler<NewPeer> for Spawner {
                     wrap_future(TcpStream::connect(&peer_info.address)
                         .map_err(|_| ())
                         .map(|stream| {
-                            Self::spawn_peer(stream)
+                            Peer::spawn(stream)
                         }))
                 }))
         } else {
             Box::new(wrap_future(TcpStream::connect(&self.potential_peers.remove(0).address)
                 .map_err(|_| ())
                 .map(|stream| {
-                    Self::spawn_peer(stream)
+                    Peer::spawn(stream)
                 })))
         }
     }

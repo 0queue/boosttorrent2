@@ -1,6 +1,7 @@
 use actix::{
     Actor,
     Addr,
+    AsyncContext,
     Context,
     Handler,
     io::{
@@ -10,7 +11,14 @@ use actix::{
 };
 use tokio::{
     net::tcp::TcpStream,
-    io::WriteHalf
+    io::{
+        AsyncRead,
+        WriteHalf
+    },
+    codec::FramedRead,
+    prelude::{
+        Stream
+    }
 };
 use crate::codec::{
     BitTorrentMessage,
@@ -27,6 +35,14 @@ impl Peer {
         Peer {
             writer
         }
+    }
+
+    pub fn spawn(stream: TcpStream) -> Addr<Peer> {
+        let (reader, writer) = stream.split();
+        Self::create(|ctx| {
+            ctx.add_message_stream(FramedRead::new(reader, MessageCodec::new()).map_err(|_| ()));
+            Peer::new(FramedWrite::new(writer, MessageCodec::new(), ctx))
+        })
     }
 }
 

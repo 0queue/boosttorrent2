@@ -17,10 +17,11 @@ mod boostencode;
 mod metainfo;
 mod tracker;
 mod piece;
-mod spawner;
+mod listener;
 mod coordinator;
 mod peer;
 mod codec;
+mod spawner;
 
 fn main() {
     let yaml = load_yaml!("cli.yml");
@@ -57,7 +58,9 @@ fn main() {
             // tell the tracker to make a request.  That request will be cached for subsequent refreshes,
             // so we don't need to store the result now
             tracker.do_send(tracker::Event::Start);
-            let spawner = spawner::Spawner::listen(coordinator, tracker, port);
+
+            let listener = spawner::Spawner::new(tracker).start();
+            let spawner = listener::Listener::listen(coordinator, port);
         });
     } else {
         error!("No torrent file provided");
