@@ -4,9 +4,19 @@ use actix::{
     Context,
     Handler,
     Message,
+    ActorFuture,
+    fut::{
+        ok,
+        wrap_future
+    },
+    prelude::ContextFutureSpawner
 };
+use futures::future::join_all;
 use crate::peer::Peer;
-use crate::spawner::Spawner;
+use crate::spawner::{
+    NewPeer,
+    Spawner
+};
 
 /// Actor that coordinates peer actions, such as assigning and cancelling pieces, sending Have messages
 /// and starting the endgame
@@ -26,6 +36,26 @@ impl Coordinator {
 
 impl Actor for Coordinator {
     type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        // We need to start up some peer connections.  wait is a method of trait ContextFutureSpawner.
+        // This blocks receiving messages until the future resolves
+        let mut spawn_futures = Vec::with_capacity(20);
+        for _ in 0..20 {
+            spawn_futures.push(self.spawner.send(NewPeer))
+        }
+        let spawn_fut = join_all(spawn_futures);
+        let actor_fut = wrap_future::<_, Self>(spawn_fut);
+        actor_fut.map_err(|_,_,_| ()).and_then(|peers, actor, _ctx| {
+            match peers.into_iter().collect::<Result<Vec<Addr<Peer>>, ()>>() {
+                Ok(mut peers) => actor.peers.append(&mut peers),
+                // TODO if any of these connections fail, the whole thing fails.  This seems somewhat
+                // fragile.  Should be fixed
+                Err(()) => panic!("An error occured getting first batch of peers in coordinator")
+            }
+            ok(())
+        }).wait(ctx)
+    }
 }
 
 #[derive(Message)]
