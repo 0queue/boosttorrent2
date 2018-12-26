@@ -4,20 +4,22 @@ use actix::{
     Context,
     Handler,
     Message,
-    MessageResult,
 };
 use crate::peer::Peer;
+use crate::spawner::Spawner;
 
 /// Actor that coordinates peer actions, such as assigning and cancelling pieces, sending Have messages
 /// and starting the endgame
 pub struct Coordinator {
     peers: Vec<Addr<Peer>>,
+    spawner: Addr<Spawner>,
 }
 
 impl Coordinator {
-    pub fn new() -> Self {
+    pub fn new(spawner: Addr<Spawner>) -> Self {
         Coordinator {
-            peers: Vec::new()
+            peers: Vec::new(),
+            spawner
         }
     }
 }
@@ -38,27 +40,3 @@ impl Handler<AddPeer> for Coordinator {
     }
 }
 
-/// Message for requesting upload/donwload/left stats
-pub struct GetStats;
-
-pub struct Stats {
-    pub uploaded: u32,
-    pub downloaded: u32,
-    pub left: u32,
-}
-
-impl Message for GetStats {
-    type Result = Stats;
-}
-
-impl Handler<GetStats> for Coordinator {
-    type Result = MessageResult<GetStats>;
-
-    fn handle(&mut self, _msg: GetStats, _ctx: &mut Context<Self>) -> Self::Result {
-        MessageResult(Stats {
-            uploaded: 0,
-            downloaded: 0,
-            left: 0,
-        })
-    }
-}

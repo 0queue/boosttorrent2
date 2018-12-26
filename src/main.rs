@@ -22,6 +22,7 @@ mod coordinator;
 mod peer;
 mod codec;
 mod spawner;
+mod stats;
 
 fn main() {
     let yaml = load_yaml!("cli.yml");
@@ -53,14 +54,15 @@ fn main() {
         let peer_id = gen_peer_id();
         let port = 6888;
         actix::System::run(move || {
-            let coordinator = coordinator::Coordinator::new().start();
-            let tracker = tracker::Tracker::new(coordinator.clone(), peer_id, metainfo.announce, metainfo.info_hash, port).start();
+            let stats = stats::Stats::new().start();
+            let tracker = tracker::Tracker::new(stats.clone(), peer_id, metainfo.announce, metainfo.info_hash, port).start();
             // tell the tracker to make a request.  That request will be cached for subsequent refreshes,
             // so we don't need to store the result now
             tracker.do_send(tracker::Event::Start);
 
-            let _listener = spawner::Spawner::new(tracker).start();
-            let _spawner = listener::Listener::listen(coordinator, port);
+            let spawner = spawner::Spawner::new(tracker).start();
+            let coordinator = coordinator::Coordinator::new(spawner).start();
+            let _listener = listener::Listener::listen(coordinator, port);
         });
     } else {
         error!("No torrent file provided");

@@ -39,13 +39,13 @@ use std::time::{
     Instant,
     Duration,
 };
-use crate::coordinator::{
-    Coordinator,
-    GetStats,
+use crate::stats::{
+    Stats,
+    GetStats
 };
 
 pub struct Tracker {
-    coordinator: Addr<Coordinator>,
+    coordinator: Addr<Stats>,
     // The 20 byte unique identifier for this instance of the client
     peer_id: [u8; 20],
     // The uri of the tracker
@@ -210,7 +210,7 @@ impl FromValue for TrackerResponse {
 impl Tracker {
     /// Create a new Tracker
     pub fn new(
-        coordinator: Addr<Coordinator>,
+        coordinator: Addr<Stats>,
         peer_id: [u8; 20],
         tracker_uri: String,
         info_hash: [u8; 20],
