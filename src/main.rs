@@ -2,6 +2,10 @@ use std::{
     fs::File,
     io::Read,
 };
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use clap::App;
 use clap::load_yaml;
@@ -15,15 +19,18 @@ use log::{
 };
 use rand::prelude::*;
 use simple_logger::init_with_level;
+use tokio::net::TcpListener;
 
 use crate::boostencode::{FromValue, Value};
+use crate::peer::Peer;
+use crate::peer::PeerLifecycleEvent;
 
 mod boostencode;
 mod metainfo;
 mod tracker2;
 mod peer;
 
-#[cfg(not(feature = "experiment"))]
+#[cfg(all(not(feature = "real"), not(feature = "experiment")))]
 fn main() {
     let yaml = load_yaml!("cli.yml");
     let matches = App::from_yaml(yaml).get_matches();
@@ -144,6 +151,57 @@ fn main() {
     rt.shutdown_on_idle().wait().unwrap();
 
     println!("done");
+}
+
+#[cfg(feature = "real")]
+fn main() {
+    let mut rt = tokio::runtime::Runtime::new().unwrap();
+
+    // TODO maintain peer state in map
+    let mut peer_map: HashMap<Peer, ()> = HashMap::new();
+    let (peer_lifecycle_sender, peer_lifecycle_receiver) = crossbeam_channel::unbounded();
+    let (message_sender, message_receiver) = crossbeam_channel::unbounded();
+
+    // 1. TODO reqwest to the tracker
+
+    // 2. TODO initial peer set
+
+    // 3. start listener
+    let our_addr = "127.0.0.1:8080".parse().unwrap();
+    let listener = TcpListener::bind(&our_addr).unwrap();
+    rt.spawn(listener.incoming()
+        .map_err(|e| eprintln!("failed to accept socket: {:?}", e))
+        .for_each(move |socket| peer::handle_stream(socket, *b"ThisIsGoodForBitcoin", gen_peer_id(), message_sender.clone(), peer_lifecycle_sender.clone())));
+
+    // 4. main loop!
+
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+    ctrlc::set_handler(move || {
+        running_clone.store(false, Ordering::SeqCst)
+    }).unwrap();
+
+    while running.load(Ordering::SeqCst) {
+        // 1. TODO process peer lifecycle
+        loop {
+            match peer_lifecycle_receiver.try_recv() {
+                Ok(PeerLifecycleEvent::Started(peer)) => { peer_map.insert(peer, ()); }
+                Ok(PeerLifecycleEvent::Stopped(peer_id)) => { /* TODO */ }
+                Err(_) => break,
+            }
+        }
+
+        // 2. TODO process peer messages
+
+        // 3. TODO dispatch commands to peers
+    }
+
+    // 5. TODO clean up peers
+
+    // 6. TODO tell tracker about shutdown
+
+    // shutdown
+    rt.shutdown_on_idle().wait().unwrap();
 }
 
 fn gen_peer_id() -> [u8; 20] {

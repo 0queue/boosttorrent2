@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, NetworkEndian};
@@ -16,6 +17,12 @@ mod handshake;
 pub mod protocol;
 mod channel_sink;
 
+// asymmetrical because started cares about the channels but stopped doesn't
+pub enum PeerLifecycleEvent {
+    Started(Peer),
+    Stopped(PeerId),
+}
+
 #[derive(Debug)]
 pub struct PeerInfo {
     pub addr: SocketAddr,
@@ -27,6 +34,20 @@ pub type PeerId = [u8; 20];
 pub struct Peer {
     peer_id: PeerId,
     tx: RefCell<UnboundedSender<Message>>,
+}
+
+impl PartialEq for Peer {
+    fn eq(&self, other: &Peer) -> bool {
+        self.peer_id == other.peer_id
+    }
+}
+
+impl Eq for Peer {}
+
+impl Hash for Peer {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.peer_id.hash(state);
+    }
 }
 
 impl Peer {
@@ -134,4 +155,44 @@ impl PeerInfo {
 
         (peer_receiver, peer.map(|_| ()))
     }
+}
+
+pub fn handle_stream(socket: TcpStream, info_hash: [u8; 20], our_peer_id: PeerId, output_sender: crossbeam_channel::Sender<Message>, peer_lifecycle_sender: crossbeam_channel::Sender<PeerLifecycleEvent>) -> impl Future<Item=(), Error=()> {
+    let (input_sender, input_receiver) = mpsc::unbounded();
+
+    let (write, read) = Framed::new(socket, handshake::HandshakeCodec::new()).split();
+
+    // handshake
+    write.send((info_hash, our_peer_id).into())
+        .and_then(|write| {
+            read.take(1).into_future()
+                .map(|(handshake, read)| (handshake, read.into_inner(), write))
+                .map_err(|(e, _)| e)
+        })
+        .and_then(move |(maybe_handshake, read, write)| match maybe_handshake {
+            Some(ref handshake) if handshake.info_hash == info_hash => futures::future::ok((handshake.peer_id, read.reunite(write).unwrap().into_inner())),
+            _ => {
+                eprintln!("invalid handshake");
+                futures::future::err(std::io::Error::new(std::io::ErrorKind::Other, "invalid handshake"))
+            }
+        })
+        .map_err(|e| eprintln!("error while handshaking: {}", e))
+        .and_then(move |(their_peer_id, socket)| {
+            let _ignore = peer_lifecycle_sender.send(PeerLifecycleEvent::Started(Peer::new(their_peer_id, input_sender)));
+
+            let (socket_output, socket_input) = Framed::new(socket, protocol::MessageCodec::new()).split();
+            let output = input_receiver.forward(socket_output.sink_map_err(|e| eprintln!("socket output error: {}", e)));
+            let input = socket_input
+                .map_err(|e| eprintln!("socket receive error: {}", e))
+                .forward(ChannelSink::new(output_sender).sink_map_err(|e| eprintln!("output send error: {}", e)));
+
+            let peer_lifecycle_sender_clone = peer_lifecycle_sender.clone();
+            output.select2(input)
+                .map_err(|_| eprintln!("peer io error"))
+                .map(|_| ())
+                .then(move |r| {
+                    let _ignore = peer_lifecycle_sender_clone.send(PeerLifecycleEvent::Stopped(their_peer_id));
+                    r
+                })
+        })
 }
