@@ -138,3 +138,16 @@ pub fn handshake_socket(
                 })
         })
 }
+
+/// For debugging purposes only
+/// because why bother with implementing
+/// someone else's trait for newtype
+pub fn pretty(peer_id: &PeerId) -> String {
+    use std::fmt::Write;
+
+    let mut s = String::new();
+    for byte in peer_id {
+        write!(s, "{:02x}", byte).unwrap();
+    }
+    s
+}

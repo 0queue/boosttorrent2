@@ -6,8 +6,6 @@ edition = "2018"
 
 [features]
 default = []
-experiment = []
-real = []
 
 [dependencies]
 derive-error = "0.0.4"
