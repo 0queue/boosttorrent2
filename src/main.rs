@@ -22,8 +22,9 @@ use simple_logger::init_with_level;
 use tokio::net::TcpListener;
 
 use crate::boostencode::{FromValue, Value};
-use crate::peer::Peer;
-use crate::peer::PeerLifecycleEvent;
+use crate::peer::PeerId;
+use crate::peer::PeerTx;
+use crate::peer::LifecycleEvent;
 
 mod boostencode;
 mod metainfo;
@@ -158,9 +159,14 @@ fn main() {
     let mut rt = tokio::runtime::Runtime::new().unwrap();
 
     // TODO maintain peer state in map
-    let mut peer_map: HashMap<Peer, ()> = HashMap::new();
+    let mut peer_map: HashMap<PeerId, (PeerTx, ())> = HashMap::new();
     let (peer_lifecycle_sender, peer_lifecycle_receiver) = crossbeam_channel::unbounded();
     let (message_sender, message_receiver) = crossbeam_channel::unbounded();
+
+    let cfg = Configuration {
+        info_hash: *b"ThisIsGoodForBitcoin",
+        peer_id: gen_peer_id(),
+    };
 
     // 1. TODO reqwest to the tracker
 
@@ -171,7 +177,7 @@ fn main() {
     let listener = TcpListener::bind(&our_addr).unwrap();
     rt.spawn(listener.incoming()
         .map_err(|e| eprintln!("failed to accept socket: {:?}", e))
-        .for_each(move |socket| peer::handle_stream(socket, *b"ThisIsGoodForBitcoin", gen_peer_id(), message_sender.clone(), peer_lifecycle_sender.clone())));
+        .for_each(move |socket| peer::handshake_socket(socket, cfg.clone(), message_sender.clone(), peer_lifecycle_sender.clone())));
 
     // 4. main loop!
 
@@ -182,11 +188,11 @@ fn main() {
     }).unwrap();
 
     while running.load(Ordering::SeqCst) {
-        // 1. TODO process peer lifecycle
+        // 1. process peer lifecycle
         loop {
             match peer_lifecycle_receiver.try_recv() {
-                Ok(PeerLifecycleEvent::Started(peer)) => { peer_map.insert(peer, ()); }
-                Ok(PeerLifecycleEvent::Stopped(peer_id)) => { /* TODO */ }
+                Ok(LifecycleEvent::Started(peer_id, tx)) => { peer_map.insert(peer_id, (tx, ())); }
+                Ok(LifecycleEvent::Stopped(peer_id)) => { peer_map.remove(&peer_id); }
                 Err(_) => break,
             }
         }
@@ -213,6 +219,12 @@ fn gen_peer_id() -> [u8; 20] {
     let mut res = [0; 20];
     res.copy_from_slice(id.as_bytes());
     res
+}
+
+#[derive(Clone)]
+pub struct Configuration {
+    pub info_hash: [u8; 20],
+    pub peer_id: PeerId,
 }
 
 mod file_progress {
