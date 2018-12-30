@@ -45,7 +45,7 @@ use crate::stats::{
 };
 
 pub struct Tracker {
-    coordinator: Addr<Stats>,
+    stats: Addr<Stats>,
     // The 20 byte unique identifier for this instance of the client
     peer_id: [u8; 20],
     // The uri of the tracker
@@ -210,13 +210,13 @@ impl FromValue for TrackerResponse {
 impl Tracker {
     /// Create a new Tracker
     pub fn new(
-        coordinator: Addr<Stats>,
+        stats: Addr<Stats>,
         peer_id: [u8; 20],
         tracker_uri: String,
         info_hash: [u8; 20],
         port: u16) -> Self {
         Tracker {
-            coordinator,
+            stats,
             peer_id,
             tracker_uri,
             info_hash,
@@ -292,7 +292,7 @@ impl Handler<Event> for Tracker {
             }
             None => ()
         }
-        let uri = self.coordinator.send(GetStats)
+        let uri = self.stats.send(GetStats)
             .map_err(|_| TrackerError::CouldNotGetStats)
             .and_then(move |stats| {
                 let query = hashmap! {

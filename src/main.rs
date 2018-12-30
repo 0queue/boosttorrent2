@@ -11,7 +11,13 @@ use rand::prelude::*;
 use simple_logger::init_with_level;
 use std::fs::File;
 use std::io::Read;
-use actix::Actor;
+use actix::{
+    Actor,
+    Addr,
+    Arbiter,
+    AsyncContext,
+    Context
+};
 
 mod boostencode;
 mod metainfo;
@@ -54,19 +60,42 @@ fn main() {
         let peer_id = gen_peer_id();
         let port = 6888;
         actix::System::run(move || {
-            let stats = stats::Stats::new().start();
-            let tracker = tracker::Tracker::new(stats.clone(), peer_id, metainfo.announce, metainfo.info_hash, port).start();
+            let tracker = start_misc_thread(peer_id, metainfo.announce.clone(), metainfo.info_hash.clone(), port);
             // tell the tracker to make a request.  That request will be cached for subsequent refreshes,
             // so we don't need to store the result now
             tracker.do_send(tracker::Event::Start);
-
-            let spawner = spawner::Spawner::new(tracker).start();
-            let coordinator = coordinator::Coordinator::new(spawner).start();
-            let _listener = listener::Listener::listen(coordinator, port);
+            // We don't start this arbiter with anything. Instead we pass it to the spawner/listener
+            // which will spawn new peers in it.
+            let peer_thread = Arbiter::new("peer thread");
+            start_coordinator_thread(tracker, peer_thread, port);
         });
     } else {
         error!("No torrent file provided");
     }
+}
+
+/// Starts the coordinator, spawner, and listener on the same thread (I think, the docs aren't clear on this,
+/// but as far as I can tell, Actor::start starts the actor in the current arbiter)
+fn start_coordinator_thread(tracker: Addr<tracker::Tracker>, peer_thread: Addr<Arbiter>, listen_port: u16) {
+    Arbiter::start(move |ctx: &mut Context<coordinator::Coordinator>| {
+        let _listener = listener::Listener::new(ctx.address(), peer_thread.clone(), listen_port).start();
+        let spawner = spawner::Spawner::new(tracker, ctx.address(), peer_thread).start();
+        coordinator::Coordinator::new(spawner)
+    });
+}
+
+/// Starts a thread on which miscalaneous low-priority actors can run on and returns those actors
+fn start_misc_thread(peer_id: [u8; 20], announce: String, info_hash: [u8; 20], port: u16) -> Addr<tracker::Tracker> {
+    Arbiter::start(move |_ctx: &mut Context<tracker::Tracker>| {
+        let stats = stats::Stats::new().start();
+        tracker::Tracker::new(stats.clone(),
+                              peer_id,
+                              announce,
+                              info_hash,
+                              port)
+
+
+    })
 }
 
 fn gen_peer_id() -> [u8; 20] {

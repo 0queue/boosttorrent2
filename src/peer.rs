@@ -6,23 +6,21 @@ use actix::{
     Handler,
     io::{
         FramedWrite,
-        WriteHandler
-    }
+        WriteHandler,
+    },
 };
 use tokio::{
     net::tcp::TcpStream,
     io::{
         AsyncRead,
-        WriteHalf
+        WriteHalf,
     },
     codec::FramedRead,
-    prelude::{
-        Stream
-    }
+    prelude::Stream,
 };
 use crate::codec::{
     BitTorrentMessage,
-    MessageCodec
+    MessageCodec,
 };
 
 /// Actor that communicates with a network peer to upload and download pieces
@@ -37,12 +35,10 @@ impl Peer {
         }
     }
 
-    pub fn spawn(stream: TcpStream) -> Addr<Peer> {
+    pub fn spawn(stream: TcpStream, ctx: &mut Context<Self>) -> Peer {
         let (reader, writer) = stream.split();
-        Self::create(|ctx| {
-            ctx.add_message_stream(FramedRead::new(reader, MessageCodec::new()).map_err(|_| ()));
-            Peer::new(FramedWrite::new(writer, MessageCodec::new(), ctx))
-        })
+        ctx.add_message_stream(FramedRead::new(reader, MessageCodec::new()).map_err(|_| ()));
+        Peer::new(FramedWrite::new(writer, MessageCodec::new(), ctx))
     }
 }
 
@@ -56,7 +52,5 @@ impl WriteHandler<::std::io::Error> for Peer {}
 impl Handler<BitTorrentMessage> for Peer {
     type Result = ();
 
-    fn handle(&mut self, msg: BitTorrentMessage, _ctx: &mut Context<Self>) {
-
-    }
+    fn handle(&mut self, msg: BitTorrentMessage, _ctx: &mut Context<Self>) {}
 }

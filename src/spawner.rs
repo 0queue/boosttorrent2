@@ -1,5 +1,6 @@
 use actix::{
     Actor,
+    Arbiter,
     Addr,
     Context,
     Handler,
@@ -12,14 +13,11 @@ use actix::{
         err,
         wrap_future,
     },
+    msgs::StartActor,
 };
 use tokio::{
-    prelude::{
-        Future,
-    },
-    net::tcp::{
-        TcpStream,
-    },
+    prelude::Future,
+    net::tcp::TcpStream,
 };
 use crate::peer::Peer;
 use crate::tracker::{
@@ -28,11 +26,13 @@ use crate::tracker::{
     Tracker,
     TrackerResponse,
 };
-
+use crate::coordinator::Coordinator;
 
 pub struct Spawner {
     tracker: Addr<Tracker>,
+    coordinator: Addr<Coordinator>,
     potential_peers: Vec<PeerInfo>,
+    peer_thread: Addr<Arbiter>,
 }
 
 impl Actor for Spawner {
@@ -40,10 +40,12 @@ impl Actor for Spawner {
 }
 
 impl Spawner {
-    pub fn new(tracker: Addr<Tracker>) -> Self {
+    pub fn new(tracker: Addr<Tracker>, coordinator: Addr<Coordinator>, peer_thread: Addr<Arbiter>) -> Self {
         Spawner {
             tracker,
+            coordinator,
             potential_peers: Vec::new(),
+            peer_thread,
         }
     }
 }
@@ -80,17 +82,26 @@ impl Handler<NewPeer> for Spawner {
                 .and_then(|peer_info, _, _| {
                     // wrap_future to turn this from a regular future into an actor future
                     wrap_future(TcpStream::connect(&peer_info.address)
+                        .map_err(|_| ()))
+                })
+                .and_then(|stream, actor, _| {
+                    // wrap the tcp stream into a peer and send it off to the peer arbiter to run on
+                    let start_actor_msg = StartActor::new(|ctx| Peer::spawn(stream, ctx));
+                    actor.peer_thread.send(start_actor_msg)
                         .map_err(|_| ())
-                        .map(|stream| {
-                            Peer::spawn(stream)
-                        }))
+                        .into_actor(actor)
+
                 }))
         } else {
-            Box::new(wrap_future(TcpStream::connect(&self.potential_peers.remove(0).address)
-                .map_err(|_| ())
-                .map(|stream| {
-                    Peer::spawn(stream)
-                })))
+            Box::new(wrap_future::<_, Self>(TcpStream::connect(&self.potential_peers.remove(0).address)
+                .map_err(|_| ()))
+                .and_then(|stream, actor, _| {
+                    // wrap the tcp stream into a peer and send it off to the peer arbiter to run on
+                    let start_actor_msg = StartActor::new(|ctx| Peer::spawn(stream, ctx));
+                    actor.peer_thread.send(start_actor_msg)
+                        .map_err(|_| ())
+                        .into_actor(actor)
+                }))
         }
     }
 }

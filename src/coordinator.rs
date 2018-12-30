@@ -9,7 +9,8 @@ use actix::{
         ok,
         wrap_future
     },
-    prelude::ContextFutureSpawner
+    prelude::ContextFutureSpawner,
+    Arbiter
 };
 use futures::future::join_all;
 use crate::peer::Peer;
@@ -17,6 +18,8 @@ use crate::spawner::{
     NewPeer,
     Spawner
 };
+use crate::tracker::Tracker;
+use crate::listener::Listener;
 
 /// Actor that coordinates peer actions, such as assigning and cancelling pieces, sending Have messages
 /// and starting the endgame
@@ -32,6 +35,7 @@ impl Coordinator {
             spawner
         }
     }
+
 }
 
 impl Actor for Coordinator {
