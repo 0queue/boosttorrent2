@@ -6,9 +6,11 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+use crossbeam_channel::select;
 use futures::future::Future;
 use futures::sink::Sink;
 use futures::stream::Stream;
+use lazy_static::lazy_static;
 use log::Level;
 use rand::prelude::*;
 use simple_logger::init_with_level;
@@ -37,9 +39,11 @@ pub struct Configuration {
     pub test_connect: Option<SocketAddr>,
 }
 
-fn main() {
-    let cfg = parse_cfg();
+lazy_static! {
+    static ref CONFIG: Configuration = parse_cfg();
+}
 
+fn main() {
     let mut rt = tokio::runtime::Runtime::new().unwrap();
 
     // TODO maintain peer state in map
@@ -54,24 +58,22 @@ fn main() {
     // borrow checker did not like this for some reason, after cleaning up at the bottom
     // instead of thinking about it more, I'll just clone everything
     // which is valid for at least the channels, but I don't know the deal with cfg
-    if cfg.test_connect.is_some() {
+    if CONFIG.test_connect.is_some() {
         let msg_send_clone = message_sender.clone();
         let lifecycle_clone = peer_lifecycle_sender.clone();
-        let cfg_clone = cfg.clone();
-        rt.spawn(TcpStream::connect(&cfg.test_connect.unwrap())
+        rt.spawn(TcpStream::connect(&CONFIG.test_connect.unwrap())
             .map_err(|e| eprintln!("Test connect error: {:?}", e))
             .and_then(move |socket| {
-                peer::handshake_socket(socket, cfg_clone, msg_send_clone, lifecycle_clone)
+                peer::handshake_socket(socket, &CONFIG, msg_send_clone, lifecycle_clone)
             }));
     }
 
     // 3. start listener
     let our_addr = "127.0.0.1:8080".parse().unwrap();
 
-    let cfg_clone = cfg.clone();
     let listener = TcpListener::bind(&our_addr).unwrap().incoming()
         .map_err(|e| eprintln!("failed to accept socket: {:?}", e))
-        .for_each(move |socket| peer::handshake_socket(socket, cfg_clone.clone(), message_sender.clone(), peer_lifecycle_sender.clone()));
+        .for_each(move |socket| peer::handshake_socket(socket, &CONFIG, message_sender.clone(), peer_lifecycle_sender.clone()));
     let (shutdown_sender, shutdown_receiver) = futures::oneshot();
 
     // wow aren't integrated error types great
@@ -87,16 +89,16 @@ fn main() {
 
     println!("Entering main loop");
     while running.load(Ordering::SeqCst) {
-        // 1. process peer lifecycle
-        loop {
-            match peer_lifecycle_receiver.try_recv() {
+        select! {
+            // process peers connecting or disconnecting
+            recv(peer_lifecycle_receiver) -> lifecycle_event => match lifecycle_event {
                 Ok(LifecycleEvent::Started(peer_id, tx)) => {
                     println!("New peer: {}", pretty(&peer_id));
                     peer_map.insert(peer_id, (tx, ()));
 
 
                     // nice it works
-                    if cfg.test_connect.is_some() {
+                    if CONFIG.test_connect.is_some() {
                         peer_map.get(&peer_id).map(|(tx, _)| tx.choke());
                         peer_map.get(&peer_id).map(|(tx, _)| tx.interested(true));
                     }
@@ -106,20 +108,19 @@ fn main() {
                     peer_map.remove(&peer_id);
                 }
                 Err(_) => break,
-            }
-        }
-
-        // 2. TODO process peer messages
-        loop {
-            match message_receiver.try_recv() {
+            },
+            // process peer messages
+            recv(message_receiver) -> msg => match msg {
                 Ok((peer_id, message)) => {
                     println!("From {}: {:?}", pretty(&peer_id), message);
                 }
                 Err(_) => break,
+            },
+            // if nothing to do, make sure all peers are busy
+            default => {
+                // TODO dispatch commands
             }
         }
-
-        // 3. TODO dispatch commands to peers
     }
 
     println!("Cleaning up");

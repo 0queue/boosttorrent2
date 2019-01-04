@@ -99,7 +99,7 @@ impl PeerMessageExt for UnboundedSender<Message> {
 
 pub fn handshake_socket(
     socket: tokio::net::TcpStream,
-    cfg: crate::Configuration,
+    cfg: &'static crate::Configuration,
     output_message_sender: Sender<(PeerId, Message)>,
     lifecycle_sender: Sender<LifecycleEvent>,
 ) -> impl Future<Item=(), Error=()> {
