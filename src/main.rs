@@ -25,7 +25,7 @@ use crate::peer::pretty;
 
 mod boostencode;
 mod metainfo;
-mod tracker2;
+mod tracker;
 mod peer;
 
 #[derive(Clone)]
